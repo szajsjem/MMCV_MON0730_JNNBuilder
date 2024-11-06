@@ -1,0 +1,4 @@
+*.dll
+BeeDNN/*
+out/*
+.vs/*
