@@ -10,7 +10,7 @@ public class Node {
     public int y;
     public int width = 100;
     public int height = 60;
-    static int overRadius = 5;
+    static int overRadius = 15;
     public List<Node> next = new ArrayList<>();
     String label;
     public List<Node> prev = new ArrayList<>();
@@ -20,6 +20,30 @@ public class Node {
     public Node(String label) {
         this.label = label;
     }
+
+    public void paint(Graphics g, boolean isSelected) {
+        // Background
+        if (isSelected) {
+            // Draw selection border
+            g.setColor(new Color(180, 200, 255));
+            g.fillRect(x - 2, y - 2, width + 4, height + 4);
+        }
+
+        // Node body
+        g.setColor(Color.WHITE);
+        g.fillRect(x, y, width, height);
+        g.setColor(isSelected ? new Color(0, 100, 200) : Color.BLACK);
+        g.drawRect(x, y, width, height);
+        g.drawString(label, x + 10, y + height / 2);
+
+        // Connection points
+        g.setColor(inputHighlighted ? Color.GREEN : (isSelected ? new Color(0, 100, 200) : Color.BLACK));
+        g.fillOval(x - 5, y + height / 2 - 5, 10, 10);  // Input
+
+        g.setColor(outputHighlighted ? Color.GREEN : (isSelected ? new Color(0, 100, 200) : Color.BLACK));
+        g.fillOval(x + width - 5, y + height / 2 - 5, 10, 10);  // Output
+    }
+
 
     public boolean isOverInputDot(Point p) {
         Rectangle inputDot = new Rectangle(x - overRadius, y + height / 2 - overRadius, 2 * overRadius, 2 * overRadius);
@@ -42,20 +66,13 @@ public class Node {
         return 0;
     }
 
+    public boolean contains(Point p) {
+        Rectangle box = new Rectangle(x - 5, y - 5, width + 10, height + 10);
+        return box.contains(p);
+    }
 
-    public void paint(Graphics g) {
-        g.setColor(Color.WHITE);
-        g.fillRect(x, y, width, height);
-        g.setColor(Color.BLACK);
-        g.drawRect(x, y, width, height);
-        g.drawString(label, x + 10, y + height/2);
-
-        // Draw connection points with highlighting
-        g.setColor(inputHighlighted ? Color.GREEN : Color.BLACK);
-        g.fillOval(x - 5, y + height/2 - 5, 10, 10);  // Input
-
-        g.setColor(outputHighlighted ? Color.GREEN : Color.BLACK);
-        g.fillOval(x + width - 5, y + height/2 - 5, 10, 10);  // Output
+    public String getLabel() {
+        return label;
     }
 }
 

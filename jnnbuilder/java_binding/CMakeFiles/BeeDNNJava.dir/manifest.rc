@@ -1,0 +1,2 @@
+#pragma code_page(65001)
+2 /* CREATEPROCESS_MANIFEST_RESOURCE_ID */ 24 /* RT_MANIFEST */ "C:/Synchronised/mega/Projects/gitok/BeeDNN/out/build/x64-Release/java_binding/CMakeFiles/BeeDNNJava.dir/embed.manifest"

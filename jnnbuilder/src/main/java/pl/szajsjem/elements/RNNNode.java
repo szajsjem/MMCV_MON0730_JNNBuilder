@@ -37,8 +37,8 @@ public class RNNNode extends Node {
     }
 
     @Override
-    public void paint(Graphics g) {
-        super.paint(g);
+    public void paint(Graphics g, boolean isSelected) {
+        super.paint(g, isSelected);
 
         // Draw t-1 feedback connection point
         g.setColor(feedbackHighlighted ? Color.GREEN : Color.BLACK);
