@@ -17,8 +17,37 @@ public class Node {
     public boolean inputHighlighted = false;
     public boolean outputHighlighted = false;
 
-    public Node(String label) {
-        this.label = label;
+    protected String[] stringParams;
+    protected float[] floatParams;
+    protected String type; // Store the layer type
+
+    public Node(String type) {
+        this.type = type;
+        this.label = type;
+        // Initialize empty arrays - will be set based on layer requirements
+        this.stringParams = new String[0];
+        this.floatParams = new float[0];
+    }
+
+    // Add getters/setters for the new fields
+    public String[] getStringParams() {
+        return stringParams;
+    }
+
+    public void setStringParams(String[] params) {
+        this.stringParams = params;
+    }
+
+    public float[] getFloatParams() {
+        return floatParams;
+    }
+
+    public void setFloatParams(float[] params) {
+        this.floatParams = params;
+    }
+
+    public String getType() {
+        return type;
     }
 
     public void paint(Graphics g, boolean isSelected) {

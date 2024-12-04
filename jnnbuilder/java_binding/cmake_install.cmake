@@ -1,8 +1,8 @@
-# Install script for directory: C:/Synchronised/mega/Projects/gitok/BeeDNN/java_binding
+# Install script for directory: C:/mega/Projects/gitok/BeeDNN/java_binding
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "C:/Synchronised/mega/Projects/gitok/BeeDNN/out/install/x64-Release")
+  set(CMAKE_INSTALL_PREFIX "C:/mega/Projects/gitok/BeeDNN/out/install/x64-Release")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 

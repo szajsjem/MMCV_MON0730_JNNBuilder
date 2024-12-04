@@ -51,6 +51,30 @@ public class NodeManager {
         canvas.repaint();  // Add this line
     }
 
+    private final List<Runnable> selectionListeners = new ArrayList<>();
+
+    public void drawNodes(Graphics2D g2d) {
+
+        // Draw dragged node on bottom
+        if (draggedNode != null) {
+            draggedNode.paint(g2d, selectedNodes.contains(draggedNode));
+        }
+
+        // Draw non-selected nodes
+        for (Node node : nodes) {
+            if (node != draggedNode) {
+                node.paint(g2d, false);
+            }
+        }
+
+        // Draw selected nodes
+        for (Node node : selectedNodes) {
+            if (draggedNode != node) {
+                node.paint(g2d, true);
+            }
+        }
+    }
+
     public void handleMousePressed(Point transformedPoint, int modifiers) {
         sourceNode = null;
         isDraggingFromOutput = false;
@@ -63,6 +87,7 @@ public class NodeManager {
             if (clickedNode.isOverOutputDot(transformedPoint)) {
                 sourceNode = clickedNode;
                 isDraggingFromOutput = true;
+                notifySelectionListeners();
                 return;
             }
 
@@ -93,6 +118,7 @@ public class NodeManager {
                         selectedNodes.add(clickedNode);
                     }
                 }
+                notifySelectionListeners();
                 return;
             }
         }
@@ -101,42 +127,7 @@ public class NodeManager {
         if ((modifiers & (InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK)) == 0) {
             selectedNodes.clear();
         }
-    }
-
-    public void drawNodes(Graphics2D g2d) {
-
-        // Draw dragged node on bottom
-        if (draggedNode != null) {
-            draggedNode.paint(g2d, selectedNodes.contains(draggedNode));
-        }
-
-        // Draw non-selected nodes
-        for (Node node : nodes) {
-            if (node != draggedNode) {
-                node.paint(g2d, false);
-            }
-        }
-
-        // Draw selected nodes
-        for (Node node : selectedNodes) {
-            if (draggedNode != node) {
-                node.paint(g2d, true);
-            }
-        }
-    }
-
-    public void handleKeyPressed(KeyEvent e) {
-        if (e.getKeyCode() == KeyEvent.VK_DELETE || e.getKeyCode() == KeyEvent.VK_BACK_SPACE) {
-            // Delete selected nodes
-            for (Node node : new ArrayList<>(selectedNodes)) {
-                deleteNode(node);
-            }
-            selectedNodes.clear();
-        } else if (e.isControlDown() && e.getKeyCode() == KeyEvent.VK_A) {
-            // Select all
-            selectedNodes.clear();
-            selectedNodes.addAll(nodes);
-        }
+        notifySelectionListeners();
     }
 
     // For moving multiple selected nodes
@@ -348,6 +339,21 @@ public class NodeManager {
         }
     }
 
+    public void handleKeyPressed(KeyEvent e) {
+        if (e.getKeyCode() == KeyEvent.VK_DELETE || e.getKeyCode() == KeyEvent.VK_BACK_SPACE) {
+            // Delete selected nodes
+            for (Node node : new ArrayList<>(selectedNodes)) {
+                deleteNode(node);
+            }
+            selectedNodes.clear();
+        } else if (e.isControlDown() && e.getKeyCode() == KeyEvent.VK_A) {
+            // Select all
+            selectedNodes.clear();
+            selectedNodes.addAll(nodes);
+            notifySelectionListeners();
+        }
+    }
+
     public void deleteNode(Node node) {
         if (node != null) {
             addUndoableAction(new DeleteNodeAction(node));
@@ -355,6 +361,7 @@ public class NodeManager {
             nodes.remove(node);
             selectedNodes.remove(node);
             canvas.repaint();  // Add this line
+            notifySelectionListeners();
         }
     }
 
@@ -371,6 +378,7 @@ public class NodeManager {
             }
             selectedNodes.clear();
             canvas.repaint();
+            notifySelectionListeners();
         }
     }
 
@@ -420,6 +428,7 @@ public class NodeManager {
                     }
                 }
             }
+            notifySelectionListeners();
         }
     }
 
@@ -495,6 +504,7 @@ public class NodeManager {
             copy();
 
             canvas.repaint();
+            notifySelectionListeners();
         }
     }
 
@@ -504,7 +514,13 @@ public class NodeManager {
             action.undo();
             redoStack.push(action);
             canvas.repaint();  // Add this line
+            notifySelectionListeners();
         }
+    }
+
+    private void addUndoableAction(UndoableAction action) {
+        undoStack.push(action);
+        redoStack.clear();
     }
 
     public void redo() {
@@ -513,12 +529,19 @@ public class NodeManager {
             action.redo();
             undoStack.push(action);
             canvas.repaint();  // Add this line
+            notifySelectionListeners();
         }
     }
 
-    private void addUndoableAction(UndoableAction action) {
-        undoStack.push(action);
-        redoStack.clear();
+    public void addSelectionListener(Runnable listener) {
+        selectionListeners.add(listener);
+    }
+
+    // Modify the parts where selection changes to call notifySelectionListeners()
+    private void notifySelectionListeners() {
+        for (Runnable listener : selectionListeners) {
+            listener.run();
+        }
     }
 
     public Set<Node> getSelectedNodes() {

@@ -30,9 +30,9 @@ public class NetworkEditorGUI extends JFrame {
         setLayout(new BorderLayout());
 
         // Create components
-        toolPanel = new ToolPanel(this);
         canvas = new CanvasPanel();
         nodeManager = new NodeManager(canvas, this);
+        toolPanel = new ToolPanel(this);
         statusBar = new StatusBar();
 
         // Setup main split pane
@@ -494,12 +494,12 @@ public class NetworkEditorGUI extends JFrame {
                 layerPanel.add(Box.createVerticalStrut(5));
             }
 
-            // Properties panel
-            JPanel propsPanel = new JPanel();
-            propsPanel.setLayout(new BorderLayout());
-            propsPanel.setBorder(BorderFactory.createTitledBorder("Properties"));
+            JScrollPane scrollPane = new JScrollPane(layerPanel);
+            scrollPane.getVerticalScrollBar().setUnitIncrement(16); // Increase from default 1
+            scrollPane.getVerticalScrollBar().setBlockIncrement(64); // Increase from default 10
 
-            add(new JScrollPane(layerPanel), BorderLayout.CENTER);
+            PropertiesPanel propsPanel = new PropertiesPanel(nodeManager);
+            add(scrollPane, BorderLayout.CENTER);
             add(propsPanel, BorderLayout.SOUTH);
         }
     }
