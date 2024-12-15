@@ -6,6 +6,7 @@ import pl.szajsjem.elements.Node;
 import javax.swing.*;
 import java.awt.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -83,34 +84,33 @@ public class PropertiesPanel extends JPanel {
         // Process string parameters
         String[] stringDescs = lines[1].split(";");
         if (stringDescs.length > 0) {
-            contentPanel.add(new JLabel("String Parameters:"));
             for (int i = 0; i < stringDescs.length; i++) {
                 JPanel paramPanel = new JPanel(new BorderLayout());
                 String desc = stringDescs[i].trim();
-                paramPanel.add(new JLabel(desc), BorderLayout.NORTH);
 
-                if (desc.contains("Activation")) {
-                    // Create combo box for activation functions
-                    JComboBox<String> combo = new JComboBox<>(Layer.getAvailableActivations());
-                    String value = getCommonStringParam(selectedNodes, i);
-                    if (!value.equals("...")) {
-                        combo.setSelectedItem(value);
-                    }
-                    int finalI = i;
-                    combo.addActionListener(e -> {
-                        stringFields.get(finalI).setText((String) combo.getSelectedItem());
-                        updateTimer.restart();
-                    });
-
-                    // Add hidden text field for value storage
+                if (desc.length() < 3) continue;
+                if (desc.toLowerCase().contains("layer")) {
+                    // Add hidden field to maintain parameter order
                     JTextField hiddenField = new JTextField();
                     hiddenField.setVisible(false);
                     stringFields.add(hiddenField);
+                    continue;
+                }
 
-                    paramPanel.add(combo, BorderLayout.CENTER);
+                paramPanel.add(new JLabel(desc), BorderLayout.NORTH);
+
+                JComboBox<String> combo;
+
+                if (desc.contains("Activation")) {
+                    combo = new JComboBox<>(Layer.getAvailableActivations());
                 } else if (desc.contains("Reduction")) {
-                    // Create combo box for reduction operations
-                    JComboBox<String> combo = new JComboBox<>(Layer.getAvailableReductions());
+                    combo = new JComboBox<>(Layer.getAvailableReductions());
+                } else if (desc.contains("Initializer")) {
+                    combo = new JComboBox<>(Layer.getAvailableInitializers());
+                } else {
+                    combo = null;
+                }
+                if (combo != null) {
                     String value = getCommonStringParam(selectedNodes, i);
                     if (!value.equals("...")) {
                         combo.setSelectedItem(value);
@@ -148,7 +148,7 @@ public class PropertiesPanel extends JPanel {
         }
 
         String[] floatDescs = lines[2].split(";");
-        if (floatDescs.length > 0) {
+        if (floatDescs.length > 0 && Arrays.stream(floatDescs).anyMatch(t -> t.length() > 3)) {
             contentPanel.add(new JLabel("Numeric Parameters:"));
             for (int i = 0; i < floatDescs.length; i++) {
                 JPanel paramPanel = new JPanel(new BorderLayout());

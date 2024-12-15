@@ -1,8 +1,6 @@
 package pl.szajsjem.elements;
 
 import java.awt.*;
-import java.util.ArrayList;
-import java.util.List;
 
 // Base class for all nodes
 public class Node {
@@ -10,23 +8,25 @@ public class Node {
     public int y;
     public int width = 100;
     public int height = 60;
-    static int overRadius = 15;
-    public List<Node> next = new ArrayList<>();
-    String label;
-    public List<Node> prev = new ArrayList<>();
-    public boolean inputHighlighted = false;
-    public boolean outputHighlighted = false;
+    String label, type;
+    public ConnectionPoint next = new ConnectionPoint(this, "out", false, width, height / 2);
+    public ConnectionPoint prev = new ConnectionPoint(this, "in", true, 0, height / 2);
 
     protected String[] stringParams;
     protected float[] floatParams;
-    protected String type; // Store the layer type
 
     public Node(String type) {
         this.type = type;
         this.label = type;
-        // Initialize empty arrays - will be set based on layer requirements
         this.stringParams = new String[0];
         this.floatParams = new float[0];
+    }
+
+    public static boolean isSpecial(String name) {
+        if (name.contains("RNN")) return true;
+        if (name.equals("LayerStacked")) return true;
+        if (name.equals("LayerRepetetive")) return true;
+        return name.equals("LayerRouter");
     }
 
     // Add getters/setters for the new fields
@@ -50,7 +50,8 @@ public class Node {
         return type;
     }
 
-    public void paint(Graphics g, boolean isSelected) {
+    public void paint(Graphics2D g, boolean isSelected) {
+        g.setStroke(new BasicStroke(2.0f));
         // Background
         if (isSelected) {
             // Draw selection border
@@ -66,33 +67,15 @@ public class Node {
         g.drawString(label, x + 10, y + height / 2);
 
         // Connection points
-        g.setColor(inputHighlighted ? Color.GREEN : (isSelected ? new Color(0, 100, 200) : Color.BLACK));
-        g.fillOval(x - 5, y + height / 2 - 5, 10, 10);  // Input
-
-        g.setColor(outputHighlighted ? Color.GREEN : (isSelected ? new Color(0, 100, 200) : Color.BLACK));
-        g.fillOval(x + width - 5, y + height / 2 - 5, 10, 10);  // Output
+        next.paint(g, isSelected);
+        prev.paint(g, isSelected);
     }
 
-
-    public boolean isOverInputDot(Point p) {
-        Rectangle inputDot = new Rectangle(x - overRadius, y + height / 2 - overRadius, 2 * overRadius, 2 * overRadius);
-        return inputDot.contains(p);
-    }
-
-    public boolean isOverOutputDot(Point p) {
-        Rectangle outputDot = new Rectangle(x + width - overRadius, y + height / 2 - overRadius, 2 * overRadius, 2 * overRadius);
-        return outputDot.contains(p);
-    }
-
-    // 1 if this.out -> n.in
-    // -1 if this.in <- n.out
-    // 0 othervise
-    public int isDotOverDot(Node n) {
-        if (isOverOutputDot(new Point(n.x, n.y)))
-            return 1;
-        if (isOverInputDot(new Point(n.x, n.y)))
-            return -1;
-        return 0;
+    //returns what connection point it is over
+    public ConnectionPoint isOverDot(Point mouseRelease) {
+        if (next.isOver(mouseRelease)) return next;
+        if (prev.isOver(mouseRelease)) return prev;
+        return null;
     }
 
     public boolean contains(Point p) {

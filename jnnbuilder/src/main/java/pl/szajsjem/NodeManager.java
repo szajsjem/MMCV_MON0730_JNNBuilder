@@ -1,13 +1,14 @@
 package pl.szajsjem;
 
+
+import pl.szajsjem.elements.ConnectionPoint;
 import pl.szajsjem.elements.Node;
-import pl.szajsjem.elements.RNNNode;
+import pl.szajsjem.elements.SpecialNode;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
-import java.awt.geom.Path2D;
 import java.awt.geom.Point2D;
 import java.util.List;
 import java.util.*;
@@ -16,19 +17,18 @@ public class NodeManager {
     private final List<Node> nodes = new ArrayList<>();
     private final ConnectionManager connectionManager;
     private final Set<Node> selectedNodes = new HashSet<>();
-    // For undo/redo support
     private final Stack<UndoableAction> undoStack = new Stack<>();
     private final Stack<UndoableAction> redoStack = new Stack<>();
     private final JPanel canvas;
     private final NetworkEditorGUI parentgui;
     private Node draggedNode = null;
     private final Point dragOffset = new Point();
-    private Node sourceNode = null;
-    private boolean isDraggingFromOutput = false;
+    private final List<Runnable> selectionListeners = new ArrayList<>();
     private Point lastMousePosition = new Point();
     private final List<Node> clipboardNodes = new ArrayList<>();
     private final Point clipboardOffset = new Point();
     private final Map<Node, Node> nodeMapping = new HashMap<>();
+    private ConnectionPoint sourcePoint = null;
 
     public NodeManager(JPanel canvas, NetworkEditorGUI networkEditorGUI) {
         this.canvas = canvas;
@@ -38,8 +38,8 @@ public class NodeManager {
 
     public void createNode(String type) {
         Node node;
-        if (type.contains("RNN")) {
-            node = new RNNNode(type);
+        if (Node.isSpecial(type)) {
+            node = new SpecialNode(type);
         } else {
             node = new Node(type);
         }
@@ -48,10 +48,8 @@ public class NodeManager {
 
         addUndoableAction(new CreateNodeAction(node));
         nodes.add(node);
-        canvas.repaint();  // Add this line
+        canvas.repaint();
     }
-
-    private final List<Runnable> selectionListeners = new ArrayList<>();
 
     public void drawNodes(Graphics2D g2d) {
 
@@ -76,17 +74,16 @@ public class NodeManager {
     }
 
     public void handleMousePressed(Point transformedPoint, int modifiers) {
-        sourceNode = null;
-        isDraggingFromOutput = false;
+        sourcePoint = null;
         lastMousePosition = transformedPoint;
 
         Node clickedNode = getNodeAt(transformedPoint);
 
         // Check for connection point clicks first
         if (clickedNode != null) {
-            if (clickedNode.isOverOutputDot(transformedPoint)) {
-                sourceNode = clickedNode;
-                isDraggingFromOutput = true;
+            ConnectionPoint clickedPoint = clickedNode.isOverDot(transformedPoint);
+            if (clickedPoint != null) {
+                sourcePoint = clickedPoint;
                 notifySelectionListeners();
                 return;
             }
@@ -98,21 +95,18 @@ public class NodeManager {
 
                 // Handle selection
                 if ((modifiers & InputEvent.CTRL_DOWN_MASK) != 0) {
-                    // Control-click: toggle selection without clearing others
                     if (selectedNodes.contains(clickedNode)) {
                         selectedNodes.remove(clickedNode);
                     } else {
                         selectedNodes.add(clickedNode);
                     }
                 } else if ((modifiers & InputEvent.SHIFT_DOWN_MASK) != 0) {
-                    // Shift-click: toggle selection
                     if (selectedNodes.contains(clickedNode)) {
                         selectedNodes.remove(clickedNode);
                     } else {
                         selectedNodes.add(clickedNode);
                     }
                 } else {
-                    // Regular click: select only this node if not already selected
                     if (!selectedNodes.contains(clickedNode)) {
                         selectedNodes.clear();
                         selectedNodes.add(clickedNode);
@@ -130,7 +124,6 @@ public class NodeManager {
         notifySelectionListeners();
     }
 
-    // For moving multiple selected nodes
     public void handleMouseDragged(Point transformedPoint) {
         lastMousePosition = transformedPoint;
 
@@ -155,15 +148,17 @@ public class NodeManager {
             draggedNode.x = Math.round(draggedNode.x / 20f) * 20;
             draggedNode.y = Math.round(draggedNode.y / 20f) * 20;
 
-            updateNodeHighlights(transformedPoint);
+            updateConnectionPointHighlights(transformedPoint);
         }
     }
 
     public void handleMouseReleased(Point transformedPoint) {
-        if (sourceNode != null && isDraggingFromOutput) {
-            for (Node targetNode : nodes) {
-                if (targetNode != sourceNode && targetNode.isOverInputDot(transformedPoint)) {
-                    tryCreateConnection(sourceNode, targetNode);
+        if (sourcePoint != null) {
+            Node targetNode = getNodeAt(transformedPoint);
+            if (targetNode != null) {
+                ConnectionPoint targetPoint = targetNode.isOverDot(transformedPoint);
+                if (targetPoint != null) {
+                    tryCreateConnection(sourcePoint, targetPoint);
                 }
             }
         }
@@ -173,72 +168,76 @@ public class NodeManager {
             draggedNode = null;
         }
 
-        sourceNode = null;
-        isDraggingFromOutput = false;
+        sourcePoint = null;
     }
 
     public void handleMouseMoved(Point transformedPoint) {
         lastMousePosition = transformedPoint;
-        updateNodeHighlights(transformedPoint);
+        updateConnectionPointHighlights(transformedPoint);
     }
 
     public void drawConnections(Graphics2D g2d) {
-        // Set up nice looking lines
-        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2d.setStroke(new BasicStroke(2.0f));
+        // Draw temporary connection while dragging
+        if (sourcePoint != null && lastMousePosition != null) {
+            g2d.setColor(Color.GRAY);
+            g2d.setStroke(new BasicStroke(2.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
+                    0, new float[]{9}, 0));
 
-        // Draw regular connections
-        for (Node node : nodes) {
-            for (Node next : node.next) {
-                drawConnection(g2d, node, next, false);
+            Point startPoint = sourcePoint.getAbsolutePos();
+
+            // Draw temp connection with bezier curve
+            int controlDist = 50;
+            Point2D.Float ctrl1, ctrl2;
+
+            // Adjust control points based on whether source is input or output
+            if (!sourcePoint.isInput()) {
+                ctrl1 = new Point2D.Float(startPoint.x + controlDist, startPoint.y);
+                ctrl2 = new Point2D.Float(lastMousePosition.x - controlDist, lastMousePosition.y);
+            } else {
+                ctrl1 = new Point2D.Float(startPoint.x - controlDist, startPoint.y);
+                ctrl2 = new Point2D.Float(lastMousePosition.x + controlDist, lastMousePosition.y);
             }
 
-            // Draw RNN feedback connections
-            if (node instanceof RNNNode rnnNode) {
-                for (Node feedback : rnnNode.feedbackNodes) {
-                    drawConnection(g2d, rnnNode, feedback, true);
+            // Draw the bezier curve
+            java.awt.geom.Path2D.Float path = new java.awt.geom.Path2D.Float();
+            path.moveTo(startPoint.x, startPoint.y);
+            path.curveTo(ctrl1.x, ctrl1.y, ctrl2.x, ctrl2.y, lastMousePosition.x, lastMousePosition.y);
+            g2d.draw(path);
+        }
+    }
+
+    private void updateConnectionPointHighlights(Point p) {
+        // Reset all highlights
+        for (Node node : nodes) {
+            node.prev.highlighted = false;
+            node.next.highlighted = false;
+            if (node instanceof SpecialNode specialNode) {
+                for (ConnectionPoint sp : specialNode.specialPoints) {
+                    sp.highlighted = false;
                 }
             }
         }
 
-        // Draw temporary connection while dragging
-        if (sourceNode != null && isDraggingFromOutput) {
-            g2d.setColor(Color.GRAY);
-            g2d.setStroke(new BasicStroke(2.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
-                    0, new float[]{9}, 0));
-            drawBezierConnection(g2d,
-                    new Point(sourceNode.x + sourceNode.width, sourceNode.y + sourceNode.height / 2),
-                    lastMousePosition);
+        // Update highlights based on current dragging
+        if (sourcePoint != null) {
+            Node targetNode = getNodeAt(p);
+            if (targetNode != null) {
+                ConnectionPoint targetPoint = targetNode.isOverDot(p);
+                if (targetPoint != null && canConnect(sourcePoint, targetPoint)) {
+                    targetPoint.highlighted = true;
+                }
+            }
         }
     }
 
-    private void drawConnection(Graphics2D g2d, Node from, Node to, boolean isFeedback) {
-        Point start = new Point(from.x + from.width, from.y + from.height / 2);
-        Point end = new Point(to.x, to.y + to.height / 2);
+    private boolean canConnect(ConnectionPoint source, ConnectionPoint target) {
+        // Can't connect to self
+        if (source.parent == target.parent) return false;
 
-        // Different styles for different connection types
-        if (isFeedback) {
-            g2d.setColor(new Color(0, 100, 0));
-            g2d.setStroke(new BasicStroke(2.0f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
-                    0, new float[]{9}, 0));
-        } else {
-            g2d.setColor(Color.BLACK);
-            g2d.setStroke(new BasicStroke(2.0f));
-        }
-
-        drawBezierConnection(g2d, start, end);
+        // One must be input, one must be output
+        return source.isInput() != target.isInput();
     }
 
-    private void drawBezierConnection(Graphics2D g2d, Point start, Point end) {
-        int controlDist = 50;
-        Point2D.Float ctrl1 = new Point2D.Float(start.x + controlDist, start.y);
-        Point2D.Float ctrl2 = new Point2D.Float(end.x - controlDist, end.y);
-
-        Path2D.Float path = new Path2D.Float();
-        path.moveTo(start.x, start.y);
-        path.curveTo(ctrl1.x, ctrl1.y, ctrl2.x, ctrl2.y, end.x, end.y);
-        g2d.draw(path);
-    }
 
     public Node getNodeAt(Point p) {
         // Check in reverse order to get top-most node
@@ -280,64 +279,69 @@ public class NodeManager {
     }
 
     private void handlePotentialConnections(Point p) {
+        // We only care about potential connections if we're dragging a node
+        if (draggedNode == null) return;
+
         for (Node targetNode : nodes) {
             if (targetNode == draggedNode) continue;
 
-            int connectionType = targetNode.isDotOverDot(draggedNode);
-            switch (connectionType) {
-                case 1: // targetNode output -> draggedNode input
-                    tryCreateConnection(targetNode, draggedNode);
-                    break;
-                case -1: // draggedNode output -> targetNode input
-                    tryCreateConnection(draggedNode, targetNode);
-                    break;
-                case 2: // RNN feedback connection
-                    if (targetNode instanceof RNNNode rnnNode) {
-                        connectionManager.connectRNNFeedback(rnnNode, draggedNode);
-                    }
-                    break;
+            // Check both nodes' connection points
+            ConnectionPoint draggedPoint = draggedNode.isOverDot(p);
+            ConnectionPoint targetPoint = targetNode.isOverDot(p);
+
+            if (draggedPoint != null && targetPoint != null) {
+                // Both have connection points near each other
+                if (canConnect(draggedPoint, targetPoint)) {
+                    // Connect them respecting input/output direction
+                    ConnectionPoint output = draggedPoint.isInput() ? targetPoint : draggedPoint;
+                    ConnectionPoint input = draggedPoint.isInput() ? draggedPoint : targetPoint;
+                    tryCreateConnection(output, input);
+                }
             }
         }
     }
 
-    private void tryCreateConnection(Node from, Node to) {
-        boolean success = connectionManager.connectNodes(from, to);
-        if (success) {
-            addUndoableAction(new CreateConnectionAction(from, to));
+    private void tryCreateConnection(ConnectionPoint source, ConnectionPoint target) {
+        if (!canConnect(source, target)) return;
+
+        // Always connect from output to input
+        ConnectionPoint output = source.isInput() ? target : source;
+        ConnectionPoint input = source.isInput() ? source : target;
+
+        if (!output.connected.contains(input)) {
+            addUndoableAction(new CreateConnectionAction(output, input));
+            output.connected.add(input);
         }
     }
 
     private void updateNodeHighlights(Point p) {
         // Reset all highlights
         for (Node node : nodes) {
-            node.inputHighlighted = false;
-            node.outputHighlighted = false;
-            if (node instanceof RNNNode) {
-                ((RNNNode) node).feedbackHighlighted = false;
+            node.prev.highlighted = false;
+            node.next.highlighted = false;
+            if (node instanceof SpecialNode specialNode) {
+                for (ConnectionPoint sp : specialNode.specialPoints) {
+                    sp.highlighted = false;
+                }
             }
         }
 
-        // Update highlights based on current dragging
-        if (draggedNode != null || sourceNode != null) {
+        // If we're dragging a node, check for potential connections
+        if (draggedNode != null) {
             for (Node targetNode : nodes) {
-                if (targetNode == draggedNode || targetNode == sourceNode) continue;
+                if (targetNode == draggedNode) continue;
 
-                if (isDraggingFromOutput) {
-                    if (targetNode.isOverInputDot(p)) {
-                        targetNode.inputHighlighted = true;
-                    }
-                } else {
-                    if (targetNode.isOverOutputDot(p)) {
-                        targetNode.outputHighlighted = true;
-                    }
-                    if (targetNode instanceof RNNNode &&
-                            ((RNNNode) targetNode).isOverFeedbackDot(p)) {
-                        ((RNNNode) targetNode).feedbackHighlighted = true;
-                    }
+                ConnectionPoint draggedPoint = draggedNode.isOverDot(p);
+                ConnectionPoint targetPoint = targetNode.isOverDot(p);
+
+                if (draggedPoint != null && targetPoint != null && canConnect(draggedPoint, targetPoint)) {
+                    draggedPoint.highlighted = true;
+                    targetPoint.highlighted = true;
                 }
             }
         }
     }
+
 
     public void handleKeyPressed(KeyEvent e) {
         if (e.getKeyCode() == KeyEvent.VK_DELETE || e.getKeyCode() == KeyEvent.VK_BACK_SPACE) {
@@ -353,6 +357,7 @@ public class NodeManager {
             notifySelectionListeners();
         }
     }
+
 
     public void deleteNode(Node node) {
         if (node != null) {
@@ -392,11 +397,11 @@ public class NodeManager {
             clipboardOffset.x = firstNode.x;
             clipboardOffset.y = firstNode.y;
 
-            // First pass: create all nodes
+            // First pass: create all nodes and their connection points
             for (Node node : selectedNodes) {
                 Node nodeCopy;
-                if (node instanceof RNNNode) {
-                    nodeCopy = new RNNNode(node.getLabel());
+                if (node instanceof SpecialNode) {
+                    nodeCopy = new SpecialNode(node.getLabel());
                 } else {
                     nodeCopy = new Node(node.getLabel());
                 }
@@ -410,26 +415,57 @@ public class NodeManager {
             for (Node originalNode : selectedNodes) {
                 Node copiedNode = nodeMapping.get(originalNode);
 
-                // Copy normal connections
-                for (Node nextNode : originalNode.next) {
-                    if (selectedNodes.contains(nextNode)) {
-                        Node copiedNextNode = nodeMapping.get(nextNode);
-                        copiedNode.next.add(copiedNextNode);
-                        copiedNextNode.prev.add(copiedNode);
-                    }
-                }
+                // Copy connections from output points
+                copyConnectionPoint(originalNode.next, copiedNode.next);
 
-                // Copy RNN feedback connections
-                if (originalNode instanceof RNNNode originalRNN && copiedNode instanceof RNNNode copiedRNN) {
-                    for (Node feedbackNode : originalRNN.feedbackNodes) {
-                        if (selectedNodes.contains(feedbackNode)) {
-                            copiedRNN.feedbackNodes.add(nodeMapping.get(feedbackNode));
-                        }
+                // Copy connections from input points
+                copyConnectionPoint(originalNode.prev, copiedNode.prev);
+
+                // Copy special point connections for SpecialNodes
+                if (originalNode instanceof SpecialNode originalSpecial &&
+                        copiedNode instanceof SpecialNode copiedSpecial) {
+                    for (int i = 0; i < originalSpecial.specialPoints.size(); i++) {
+                        ConnectionPoint originalPoint = originalSpecial.specialPoints.get(i);
+                        ConnectionPoint copiedPoint = copiedSpecial.specialPoints.get(i);
+                        copyConnectionPoint(originalPoint, copiedPoint);
                     }
                 }
             }
             notifySelectionListeners();
         }
+    }
+
+    private void copyConnectionPoint(ConnectionPoint original, ConnectionPoint copy) {
+        for (ConnectionPoint connected : original.connected) {
+            Node connectedNode = connected.parent;
+            if (selectedNodes.contains(connectedNode)) {
+                Node copiedConnectedNode = nodeMapping.get(connectedNode);
+                // Find the corresponding connection point in the copied node
+                ConnectionPoint copiedConnectedPoint = findCorrespondingPoint(connected, copiedConnectedNode);
+                if (copiedConnectedPoint != null) {
+                    if (copy.isInput()) {
+                        copiedConnectedPoint.connected.add(copy);
+                    } else {
+                        copy.connected.add(copiedConnectedPoint);
+                    }
+                }
+            }
+        }
+    }
+
+    private ConnectionPoint findCorrespondingPoint(ConnectionPoint original, Node copiedNode) {
+        // Check if it's the main input or output point
+        if (original == original.parent.prev) return copiedNode.prev;
+        if (original == original.parent.next) return copiedNode.next;
+
+        // Check special points if applicable
+        if (original.parent instanceof SpecialNode originalSpecial && copiedNode instanceof SpecialNode copiedSpecial) {
+            int index = originalSpecial.specialPoints.indexOf(original);
+            if (index >= 0 && index < copiedSpecial.specialPoints.size()) {
+                return copiedSpecial.specialPoints.get(index);
+            }
+        }
+        return null;
     }
 
     public void paste() {
@@ -440,24 +476,24 @@ public class NodeManager {
 
             // Calculate paste offset
             Point mouse = canvas.getMousePosition();
-            if (mouse == null) {
-                clipboardOffset.x += 20;
-                clipboardOffset.y += 20;
+            Point2D pasteLocation = null;
+            if (mouse != null) {
+                pasteLocation = parentgui.transformPoint(mouse);
             }
 
             // First pass: create all nodes
             for (Node node : clipboardNodes) {
                 Node newNode;
-                if (node instanceof RNNNode) {
-                    newNode = new RNNNode(node.getLabel());
+                if (node instanceof SpecialNode) {
+                    newNode = new SpecialNode(node.getLabel());
                 } else {
                     newNode = new Node(node.getLabel());
                 }
 
-                if (mouse != null) {
-                    Point2D transformed = parentgui.transformPoint(mouse);
-                    newNode.x = (int) (transformed.getX() + (node.x - clipboardOffset.x));
-                    newNode.y = (int) (transformed.getY() + (node.y - clipboardOffset.y));
+                // Calculate new position
+                if (pasteLocation != null) {
+                    newNode.x = (int) (pasteLocation.getX() + (node.x - clipboardOffset.x));
+                    newNode.y = (int) (pasteLocation.getY() + (node.y - clipboardOffset.y));
                 } else {
                     newNode.x = node.x + 20;
                     newNode.y = node.y + 20;
@@ -470,28 +506,26 @@ public class NodeManager {
                 nodes.add(newNode);
                 selectedNodes.add(newNode);
                 pastedNodes.add(newNode);
-                nodeMapping.put(node, newNode);  // Store mapping
+                nodeMapping.put(node, newNode);
             }
 
             // Second pass: recreate connections
             for (Node clipboardNode : clipboardNodes) {
                 Node pastedNode = nodeMapping.get(clipboardNode);
 
-                // Recreate normal connections
-                for (Node nextNode : clipboardNode.next) {
-                    Node pastedNextNode = nodeMapping.get(nextNode);
-                    if (pastedNextNode != null) {
-                        connectionManager.connectNodes(pastedNode, pastedNextNode);
-                    }
-                }
+                // Recreate connections for output point
+                recreateConnections(clipboardNode.next, pastedNode.next);
 
-                // Recreate RNN feedback connections
-                if (clipboardNode instanceof RNNNode clipboardRNN && pastedNode instanceof RNNNode pastedRNN) {
-                    for (Node feedbackNode : clipboardRNN.feedbackNodes) {
-                        Node pastedFeedbackNode = nodeMapping.get(feedbackNode);
-                        if (pastedFeedbackNode != null) {
-                            connectionManager.connectRNNFeedback(pastedRNN, pastedFeedbackNode);
-                        }
+                // Recreate connections for input point
+                recreateConnections(clipboardNode.prev, pastedNode.prev);
+
+                // Recreate special point connections
+                if (clipboardNode instanceof SpecialNode clipboardSpecial &&
+                        pastedNode instanceof SpecialNode pastedSpecial) {
+                    for (int i = 0; i < clipboardSpecial.specialPoints.size(); i++) {
+                        ConnectionPoint clipboardPoint = clipboardSpecial.specialPoints.get(i);
+                        ConnectionPoint pastedPoint = pastedSpecial.specialPoints.get(i);
+                        recreateConnections(clipboardPoint, pastedPoint);
                     }
                 }
             }
@@ -505,6 +539,23 @@ public class NodeManager {
 
             canvas.repaint();
             notifySelectionListeners();
+        }
+    }
+
+    private void recreateConnections(ConnectionPoint clipboardPoint, ConnectionPoint pastedPoint) {
+        for (ConnectionPoint connected : clipboardPoint.connected) {
+            Node connectedNode = connected.parent;
+            Node pastedConnectedNode = nodeMapping.get(connectedNode);
+            if (pastedConnectedNode != null) {
+                ConnectionPoint pastedConnectedPoint = findCorrespondingPoint(connected, pastedConnectedNode);
+                if (pastedConnectedPoint != null) {
+                    if (pastedPoint.isInput()) {
+                        pastedConnectedPoint.connected.add(pastedPoint);
+                    } else {
+                        pastedPoint.connected.add(pastedConnectedPoint);
+                    }
+                }
+            }
         }
     }
 
@@ -579,61 +630,98 @@ public class NodeManager {
 
     private class DeleteNodeAction implements UndoableAction {
         private final Node node;
-        private final List<Node> prevNodes;
-        private final List<Node> nextNodes;
-        private final List<Node> feedbackNodes;
+        private final Map<ConnectionPoint, List<ConnectionPoint>> storedConnections;
 
         public DeleteNodeAction(Node node) {
             this.node = node;
-            this.prevNodes = new ArrayList<>(node.prev);
-            this.nextNodes = new ArrayList<>(node.next);
-            this.feedbackNodes = node instanceof RNNNode ?
-                    new ArrayList<>(((RNNNode) node).feedbackNodes) :
-                    new ArrayList<>();
+            this.storedConnections = new HashMap<>();
+
+            // Store all connections for each connection point
+            storeConnections(node.prev);
+            storeConnections(node.next);
+            if (node instanceof SpecialNode specialNode) {
+                for (ConnectionPoint sp : specialNode.specialPoints) {
+                    storeConnections(sp);
+                }
+            }
+        }
+
+        private void storeConnections(ConnectionPoint point) {
+            List<ConnectionPoint> connections = new ArrayList<>(point.connected);
+            if (!connections.isEmpty()) {
+                storedConnections.put(point, connections);
+            }
         }
 
         @Override
         public void undo() {
             nodes.add(node);
-            for (Node prev : prevNodes) {
-                connectionManager.connectNodes(prev, node);
-            }
-            for (Node next : nextNodes) {
-                connectionManager.connectNodes(node, next);
-            }
-            if (node instanceof RNNNode rnn) {
-                for (Node feedback : feedbackNodes) {
-                    connectionManager.connectRNNFeedback(rnn, feedback);
+
+            // Restore all connections
+            for (Map.Entry<ConnectionPoint, List<ConnectionPoint>> entry : storedConnections.entrySet()) {
+                ConnectionPoint point = entry.getKey();
+                List<ConnectionPoint> connections = entry.getValue();
+
+                for (ConnectionPoint connectedPoint : connections) {
+                    if (point.isInput()) {
+                        connectedPoint.connected.add(point);
+                    } else {
+                        point.connected.add(connectedPoint);
+                    }
                 }
             }
         }
 
         @Override
         public void redo() {
-            connectionManager.disconnectAll(node);
+            // Remove all connections before removing the node
+            for (Map.Entry<ConnectionPoint, List<ConnectionPoint>> entry : storedConnections.entrySet()) {
+                ConnectionPoint point = entry.getKey();
+                List<ConnectionPoint> connections = entry.getValue();
+
+                for (ConnectionPoint connectedPoint : connections) {
+                    if (point.isInput()) {
+                        connectedPoint.connected.remove(point);
+                    } else {
+                        point.connected.remove(connectedPoint);
+                    }
+                }
+            }
             nodes.remove(node);
         }
     }
 
     private class CutAction implements UndoableAction {
         private final List<Node> cutNodes;
-        private final List<Node> prevNodes;
-        private final List<Node> nextNodes;
-        private final List<Node> feedbackNodes;
+        private final Map<Node, Map<ConnectionPoint, List<ConnectionPoint>>> storedConnections;
 
         public CutAction(List<Node> nodes) {
             this.cutNodes = new ArrayList<>(nodes);
-            this.prevNodes = new ArrayList<>();
-            this.nextNodes = new ArrayList<>();
-            this.feedbackNodes = new ArrayList<>();
+            this.storedConnections = new HashMap<>();
 
-            // Store all connections
+            // Store all connections for each node
             for (Node node : nodes) {
-                prevNodes.addAll(node.prev);
-                nextNodes.addAll(node.next);
-                if (node instanceof RNNNode rnn) {
-                    feedbackNodes.addAll(rnn.feedbackNodes);
+                Map<ConnectionPoint, List<ConnectionPoint>> nodeConnections = new HashMap<>();
+
+                storeConnectionsForPoint(node.prev, nodeConnections);
+                storeConnectionsForPoint(node.next, nodeConnections);
+
+                if (node instanceof SpecialNode specialNode) {
+                    for (ConnectionPoint sp : specialNode.specialPoints) {
+                        storeConnectionsForPoint(sp, nodeConnections);
+                    }
                 }
+
+                if (!nodeConnections.isEmpty()) {
+                    storedConnections.put(node, nodeConnections);
+                }
+            }
+        }
+
+        private void storeConnectionsForPoint(ConnectionPoint point, Map<ConnectionPoint, List<ConnectionPoint>> nodeConnections) {
+            List<ConnectionPoint> connections = new ArrayList<>(point.connected);
+            if (!connections.isEmpty()) {
+                nodeConnections.put(point, connections);
             }
         }
 
@@ -642,25 +730,20 @@ public class NodeManager {
             // Restore nodes
             nodes.addAll(cutNodes);
 
-            // Restore connections
+            // Restore all connections
             for (Node node : cutNodes) {
-                // Restore regular connections
-                for (Node prev : prevNodes) {
-                    if (prev.next.contains(node)) {
-                        connectionManager.connectNodes(prev, node);
-                    }
-                }
-                for (Node next : nextNodes) {
-                    if (node.next.contains(next)) {
-                        connectionManager.connectNodes(node, next);
-                    }
-                }
+                Map<ConnectionPoint, List<ConnectionPoint>> nodeConnections = storedConnections.get(node);
+                if (nodeConnections != null) {
+                    for (Map.Entry<ConnectionPoint, List<ConnectionPoint>> entry : nodeConnections.entrySet()) {
+                        ConnectionPoint point = entry.getKey();
+                        List<ConnectionPoint> connections = entry.getValue();
 
-                // Restore RNN feedback connections
-                if (node instanceof RNNNode rnn) {
-                    for (Node feedback : feedbackNodes) {
-                        if (rnn.feedbackNodes.contains(feedback)) {
-                            connectionManager.connectRNNFeedback(rnn, feedback);
+                        for (ConnectionPoint connectedPoint : connections) {
+                            if (point.isInput()) {
+                                connectedPoint.connected.add(point);
+                            } else {
+                                point.connected.add(connectedPoint);
+                            }
                         }
                     }
                 }
@@ -669,11 +752,27 @@ public class NodeManager {
 
         @Override
         public void redo() {
-            // Remove all connections and nodes again
+            // Remove all connections
             for (Node node : cutNodes) {
-                connectionManager.disconnectAll(node);
-                nodes.remove(node);
+                Map<ConnectionPoint, List<ConnectionPoint>> nodeConnections = storedConnections.get(node);
+                if (nodeConnections != null) {
+                    for (Map.Entry<ConnectionPoint, List<ConnectionPoint>> entry : nodeConnections.entrySet()) {
+                        ConnectionPoint point = entry.getKey();
+                        List<ConnectionPoint> connections = entry.getValue();
+
+                        for (ConnectionPoint connectedPoint : connections) {
+                            if (point.isInput()) {
+                                connectedPoint.connected.remove(point);
+                            } else {
+                                point.connected.remove(connectedPoint);
+                            }
+                        }
+                    }
+                }
             }
+
+            // Remove nodes
+            nodes.removeAll(cutNodes);
         }
     }
 
@@ -727,22 +826,22 @@ public class NodeManager {
     }
 
     private class CreateConnectionAction implements UndoableAction {
-        private final Node from;
-        private final Node to;
+        private final ConnectionPoint output;
+        private final ConnectionPoint input;
 
-        public CreateConnectionAction(Node from, Node to) {
-            this.from = from;
-            this.to = to;
+        public CreateConnectionAction(ConnectionPoint output, ConnectionPoint input) {
+            this.output = output;
+            this.input = input;
         }
 
         @Override
         public void undo() {
-            connectionManager.disconnectNodes(from, to);
+            output.connected.remove(input);
         }
 
         @Override
         public void redo() {
-            connectionManager.connectNodes(from, to);
+            output.connected.add(input);
         }
     }
 }
