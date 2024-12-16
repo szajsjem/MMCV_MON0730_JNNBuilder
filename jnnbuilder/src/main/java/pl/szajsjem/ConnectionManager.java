@@ -14,12 +14,298 @@ public class ConnectionManager {
     }
 
     /**
+     * Validates connections involving special points
+     */
+    private boolean validateSpecialPointConnection(ConnectionPoint source, ConnectionPoint target) {
+        boolean sourceIsSpecial = isSpecialPoint(source);
+        boolean targetIsSpecial = isSpecialPoint(target);
+
+        // If points are in the same node
+        if (source.parent == target.parent) {
+            // Never allow connections between points in the same node if either is special
+            if (sourceIsSpecial || targetIsSpecial) {
+                return false;
+            }
+        }
+
+        // For connections between different nodes:
+        // Allow connections between special points and normal points
+        if ((sourceIsSpecial && !targetIsSpecial) || (!sourceIsSpecial && targetIsSpecial)) {
+            return true;
+        }
+
+        // If neither point is special, allow the connection
+        return !sourceIsSpecial && !targetIsSpecial;
+
+        // If both points are special (even in different nodes), don't allow direct connection
+    }
+
+    /**
+     * Checks if there's any path between special and normal points
+     * through any sequence of connections
+     */
+    private boolean hasPathBetweenSpecialAndNormal(ConnectionPoint source, ConnectionPoint target) {
+        boolean sourceIsSpecial = isSpecialPoint(source);
+        boolean targetIsSpecial = isSpecialPoint(target);
+
+        // If source and target are of different types (one special, one normal),
+        // or trying to connect within same node, reject immediately
+        if ((sourceIsSpecial != targetIsSpecial) || source.parent == target.parent) {
+            return true;
+        }
+
+        // Find all reachable points from source
+        Set<Node> visited = new HashSet<>();
+        Set<ConnectionPoint> reachablePoints = new HashSet<>();
+        Queue<ConnectionPoint> queue = new LinkedList<>();
+        queue.add(source);
+
+        while (!queue.isEmpty()) {
+            ConnectionPoint current = queue.poll();
+            if (reachablePoints.add(current)) {
+                // Add connected points
+                for (ConnectionPoint connected : current.connected) {
+                    queue.add(connected);
+                }
+
+                // If current point is an output, add all points it can reach
+                if (!current.isInput() && visited.add(current.parent)) {
+                    // For normal points
+                    if (!isSpecialPoint(current)) {
+                        if (current == current.parent.next) {
+                            for (ConnectionPoint conn : current.connected) {
+                                if (conn.parent.prev != null) {
+                                    queue.add(conn.parent.prev);
+                                }
+                            }
+                        }
+                    }
+                    // For special points
+                    else if (current.parent instanceof SpecialNode specialNode) {
+                        for (ConnectionPoint sp : specialNode.specialPoints) {
+                            if (!sp.isInput()) {
+                                queue.addAll(sp.connected);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if any reachable point is of different type (special vs normal)
+        for (ConnectionPoint point : reachablePoints) {
+            if (isSpecialPoint(point) != sourceIsSpecial) {
+                return true;
+            }
+        }
+
+        // Also check if the target can reach any points of different type
+        visited.clear();
+        reachablePoints.clear();
+        queue.add(target);
+
+        while (!queue.isEmpty()) {
+            ConnectionPoint current = queue.poll();
+            if (reachablePoints.add(current)) {
+                for (ConnectionPoint connected : current.connected) {
+                    queue.add(connected);
+                }
+
+                if (!current.isInput() && visited.add(current.parent)) {
+                    if (!isSpecialPoint(current)) {
+                        if (current == current.parent.next) {
+                            for (ConnectionPoint conn : current.connected) {
+                                if (conn.parent.prev != null) {
+                                    queue.add(conn.parent.prev);
+                                }
+                            }
+                        }
+                    } else if (current.parent instanceof SpecialNode specialNode) {
+                        for (ConnectionPoint sp : specialNode.specialPoints) {
+                            if (!sp.isInput()) {
+                                queue.addAll(sp.connected);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for (ConnectionPoint point : reachablePoints) {
+            if (isSpecialPoint(point) != targetIsSpecial) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
+    /**
+     * Finds the special node parent (if any) of the subgraph containing this connection point's node
+     * and all nodes reachable through normal connections
+     */
+    private Node findSubgraphParent(ConnectionPoint start) {
+        // If starting point is special, its parent is the subgraph parent
+        if (isSpecialPoint(start)) {
+            return start.parent;
+        }
+
+        Set<Node> visitedNodes = new HashSet<>();
+        Queue<Node> nodeQueue = new LinkedList<>();
+        nodeQueue.add(start.parent);
+
+        while (!nodeQueue.isEmpty()) {
+            Node currentNode = nodeQueue.poll();
+            if (!visitedNodes.add(currentNode)) {
+                continue;
+            }
+
+            // Check prev connections
+            for (ConnectionPoint connected : currentNode.prev.connected) {
+                Node connectedNode = connected.parent;
+                if (!visitedNodes.contains(connectedNode)) {
+                    if (isSpecialPoint(connected)) {
+                        return connected.parent;
+                    }
+                    nodeQueue.add(connectedNode);
+                }
+            }
+
+            // Check next connections
+            for (ConnectionPoint connected : currentNode.next.connected) {
+                Node connectedNode = connected.parent;
+                if (!visitedNodes.contains(connectedNode)) {
+                    if (isSpecialPoint(connected)) {
+                        return connected.parent;
+                    }
+                    nodeQueue.add(connectedNode);
+                }
+            }
+
+            // Add nodes that could potentially be connected through normal points
+            // This is the key change - consider nodes that could form a valid normal connection
+            for (Node otherNode : nodes) {
+                if (!visitedNodes.contains(otherNode) && otherNode != currentNode) {
+                    // If these nodes could be connected through normal points
+                    if ((currentNode.next.connected.isEmpty() && otherNode.prev.connected.isEmpty()) ||
+                            (currentNode.prev.connected.isEmpty() && otherNode.next.connected.isEmpty())) {
+                        nodeQueue.add(otherNode);
+                    }
+                }
+            }
+        }
+
+        return null; // No special node parent found
+    }
+
+    private boolean nodeInSameSubgraph(Node node, Node otherNode) {
+        // Start with checking if nodes are part of regular flow
+        if (isInRegularFlow(node) && isInRegularFlow(otherNode)) {
+            return true;
+        }
+
+        // Check if they're in the same special node's subgraph
+        return findCommonSpecialParent(node, otherNode) != null;
+    }
+
+    private boolean isInRegularFlow(Node node) {
+        // Check if node has any regular (non-special) connections
+        for (Node otherNode : nodes) {
+            if (otherNode.next.connected.contains(node.prev) ||
+                    node.next.connected.contains(otherNode.prev)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private SpecialNode findCommonSpecialParent(Node node1, Node node2) {
+        Set<SpecialNode> node1Parents = findAllSpecialParents(node1);
+        Set<SpecialNode> node2Parents = findAllSpecialParents(node2);
+
+        // Find intersection of parent sets
+        for (SpecialNode parent : node1Parents) {
+            if (node2Parents.contains(parent)) {
+                return parent;
+            }
+        }
+        return null;
+    }
+
+    private Set<SpecialNode> findAllSpecialParents(Node node) {
+        Set<SpecialNode> parents = new HashSet<>();
+        findAllSpecialParentsRecursive(node, parents);
+        return parents;
+    }
+
+    private void findAllSpecialParentsRecursive(Node node, Set<SpecialNode> parents) {
+        // Check all possible connections to special nodes
+        for (Node otherNode : nodes) {
+            if (otherNode instanceof SpecialNode specialNode) {
+                // Check if this node is connected to any special points
+                boolean isConnected = false;
+                for (ConnectionPoint sp : specialNode.specialPoints) {
+                    if (!sp.isInput() && sp.connected.contains(node.prev)) {
+                        isConnected = true;
+                        break;
+                    }
+                    if (sp.isInput() && node.next.connected.contains(sp)) {
+                        isConnected = true;
+                        break;
+                    }
+                }
+
+                if (isConnected) {
+                    parents.add(specialNode);
+                    // Recursively check if this special node is part of another subgraph
+                    findAllSpecialParentsRecursive(specialNode, parents);
+                }
+            }
+        }
+    }
+
+    /**
+     * Validates whether two points can be connected based on subgraph rules
+     */
+    private boolean canConnectSubgraphs(ConnectionPoint source, ConnectionPoint target) {
+        // Don't allow connections within same node
+        if (source.parent == target.parent) {
+            return false;
+        }
+
+        // Find subgraph parents for both points
+        Node sourceParent = findSubgraphParent(source);
+        Node targetParent = findSubgraphParent(target);
+
+        // If both have same parent or both have no parent, allow connection
+        if (sourceParent == targetParent) {
+            return true;
+        }
+
+        // If they have different parents and neither is null, prevent connection
+        if (sourceParent != null && targetParent != null) {
+            return false;
+        }
+
+        // If one is null, check that the top-level graph doesn't contain the other's parent
+        if (sourceParent == null && targetParent != null) {
+            return !nodeInSameSubgraph(source.parent, target.parent);
+        }
+
+        if (targetParent == null && sourceParent != null) {
+            return !nodeInSameSubgraph(target.parent, source.parent);
+        }
+
+        return true;
+    }
+
+    /**
      * Attempts to connect two connection points
-     * @return true if connection was successful, false if it would create an invalid connection
      */
     public boolean connectPoints(ConnectionPoint source, ConnectionPoint target) {
-        // Don't connect points from the same node
-        if (source.parent == target.parent) {
+        // Don't connect a point to itself
+        if (source == target) {
             return false;
         }
 
@@ -28,15 +314,9 @@ public class ConnectionManager {
             return false;
         }
 
-        // Handle special points
-        boolean sourceIsSpecial = isSpecialPoint(source);
-        boolean targetIsSpecial = isSpecialPoint(target);
-
-        // If either point is special, verify the connection path
-        if (sourceIsSpecial || targetIsSpecial) {
-            if (!validateSpecialPointConnection(source, target)) {
-                return false;
-            }
+        // Check subgraph rules
+        if (!canConnectSubgraphs(source, target)) {
+            return false;
         }
 
         // Check for cycles
@@ -44,27 +324,17 @@ public class ConnectionManager {
             return false;
         }
 
-        // Make the connection (always connect from output to input)
+        // Make the connection (store in both points)
         ConnectionPoint output = source.isInput() ? target : source;
         ConnectionPoint input = source.isInput() ? source : target;
 
         if (!output.connected.contains(input)) {
             output.connected.add(input);
+            input.connected.add(output);
         }
         return true;
     }
 
-    /**
-     * Disconnects two connection points
-     */
-    public void disconnectPoints(ConnectionPoint source, ConnectionPoint target) {
-        source.connected.remove(target);
-        target.connected.remove(source);
-    }
-
-    /**
-     * Checks if the connection point is a special point
-     */
     private boolean isSpecialPoint(ConnectionPoint point) {
         if (point.parent instanceof SpecialNode specialNode) {
             return specialNode.specialPoints.contains(point);
@@ -72,29 +342,73 @@ public class ConnectionManager {
         return false;
     }
 
-    /**
-     * Validates connections involving special points
-     */
-    private boolean validateSpecialPointConnection(ConnectionPoint source, ConnectionPoint target) {
-        // Get the actual path between source and target nodes
-        List<ConnectionPoint> path = findPath(source, target);
-        if (path == null) {
-            return false;
-        }
+    private boolean wouldCreateCycle(ConnectionPoint source, ConnectionPoint target) {
+        // Always check from output to input
+        ConnectionPoint output = source.isInput() ? target : source;
+        ConnectionPoint input = source.isInput() ? source : target;
 
-        // For special points, ensure the path only contains prev/next points except at endpoints
-        for (int i = 1; i < path.size() - 1; i++) {
-            if (isSpecialPoint(path.get(i))) {
-                return false;
+        Set<Node> visited = new HashSet<>();
+        Queue<Node> queue = new LinkedList<>();
+        queue.add(input.parent);
+
+        while (!queue.isEmpty()) {
+            Node current = queue.poll();
+            if (current == output.parent && !isSpecialPoint(output)) {
+                return true;
+            }
+
+            if (visited.add(current)) {
+                // Only follow regular next connections
+                for (ConnectionPoint connected : current.next.connected) {
+                    queue.add(connected.parent);
+                }
             }
         }
 
-        // Special points can only connect within their own node
-        if (isSpecialPoint(source) && isSpecialPoint(target)) {
-            return source.parent == target.parent;
+        return false;
+    }
+
+
+    /**
+     * Helper method for cycle detection that checks if we can reach a target node from a start node
+     */
+    private boolean canReachNode(Node start, Node target, Set<Node> visited) {
+        if (start == target) {
+            return true;
         }
 
-        return true;
+        if (!visited.add(start)) {
+            return false;
+        }
+
+        // Check normal connections through next point
+        for (ConnectionPoint connected : start.next.connected) {
+            if (canReachNode(connected.parent, target, visited)) {
+                return true;
+            }
+        }
+
+        // Check special point connections
+        if (start instanceof SpecialNode specialNode) {
+            for (ConnectionPoint sp : specialNode.specialPoints) {
+                if (!sp.isInput()) {
+                    for (ConnectionPoint connected : sp.connected) {
+                        if (canReachNode(connected.parent, target, visited)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+
+    public void disconnectPoints(ConnectionPoint source, ConnectionPoint target) {
+        // Remove connection from both points
+        source.connected.remove(target);
+        target.connected.remove(source);
     }
 
     /**
@@ -146,48 +460,6 @@ public class ConnectionManager {
         }
 
         return null;
-    }
-
-    /**
-     * Checks if adding a connection would create a cycle
-     */
-    private boolean wouldCreateCycle(ConnectionPoint source, ConnectionPoint target) {
-        // Always check from output to input
-        ConnectionPoint output = source.isInput() ? target : source;
-        ConnectionPoint input = source.isInput() ? source : target;
-
-        Set<Node> visited = new HashSet<>();
-        Queue<Node> queue = new LinkedList<>();
-        queue.add(input.parent);
-
-        while (!queue.isEmpty()) {
-            Node current = queue.poll();
-            if (current == output.parent) {
-                return true;
-            }
-
-            if (visited.add(current)) {
-                // Add nodes connected to the current node's output points
-                if (!current.next.connected.isEmpty()) {
-                    for (ConnectionPoint connected : current.next.connected) {
-                        queue.add(connected.parent);
-                    }
-                }
-
-                // Add nodes connected via special points
-                if (current instanceof SpecialNode specialNode) {
-                    for (ConnectionPoint sp : specialNode.specialPoints) {
-                        if (!sp.isInput() && !sp.connected.isEmpty()) {
-                            for (ConnectionPoint connected : sp.connected) {
-                                queue.add(connected.parent);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return false;
     }
 
     /**

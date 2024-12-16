@@ -43,11 +43,10 @@ public class ConnectionPoint {
         int textX = parent.x + x - fm.stringWidth(name) / 2;
         g2d.drawString(name, textX, textY);
 
-        //Draw incoming connections
-        if (isInput) {
-            Point end = getAbsolutePos();
-            for (var othp : connected) {
-                Point start = othp.getAbsolutePos();
+        if (!isInput) {  // Draw only once
+            Point start = getAbsolutePos();
+            for (var targetPoint : connected) {
+                Point end = targetPoint.getAbsolutePos();
                 g2d.setColor(Color.BLACK);
                 g2d.setStroke(new BasicStroke(2.0f));
                 int controlDist = 50;

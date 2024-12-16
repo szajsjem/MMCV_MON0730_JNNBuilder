@@ -291,26 +291,19 @@ public class NodeManager {
 
             if (draggedPoint != null && targetPoint != null) {
                 // Both have connection points near each other
-                if (canConnect(draggedPoint, targetPoint)) {
-                    // Connect them respecting input/output direction
-                    ConnectionPoint output = draggedPoint.isInput() ? targetPoint : draggedPoint;
-                    ConnectionPoint input = draggedPoint.isInput() ? draggedPoint : targetPoint;
-                    tryCreateConnection(output, input);
-                }
+                tryCreateConnection(draggedPoint, targetPoint);
             }
         }
     }
 
     private void tryCreateConnection(ConnectionPoint source, ConnectionPoint target) {
-        if (!canConnect(source, target)) return;
-
-        // Always connect from output to input
-        ConnectionPoint output = source.isInput() ? target : source;
-        ConnectionPoint input = source.isInput() ? source : target;
-
-        if (!output.connected.contains(input)) {
-            addUndoableAction(new CreateConnectionAction(output, input));
-            output.connected.add(input);
+        // Remove direct connection creation and use ConnectionManager instead
+        if (connectionManager.connectPoints(source, target)) {
+            // Only add to undo stack if connection was successful
+            addUndoableAction(new CreateConnectionAction(
+                    source.isInput() ? target : source,  // output
+                    source.isInput() ? source : target   // input
+            ));
         }
     }
 
@@ -509,7 +502,7 @@ public class NodeManager {
                 nodeMapping.put(node, newNode);
             }
 
-            // Second pass: recreate connections
+            // Second pass: recreate connections using ConnectionManager
             for (Node clipboardNode : clipboardNodes) {
                 Node pastedNode = nodeMapping.get(clipboardNode);
 
@@ -549,11 +542,7 @@ public class NodeManager {
             if (pastedConnectedNode != null) {
                 ConnectionPoint pastedConnectedPoint = findCorrespondingPoint(connected, pastedConnectedNode);
                 if (pastedConnectedPoint != null) {
-                    if (pastedPoint.isInput()) {
-                        pastedConnectedPoint.connected.add(pastedPoint);
-                    } else {
-                        pastedPoint.connected.add(pastedConnectedPoint);
-                    }
+                    connectionManager.connectPoints(pastedPoint, pastedConnectedPoint);
                 }
             }
         }
@@ -657,36 +646,21 @@ public class NodeManager {
         public void undo() {
             nodes.add(node);
 
-            // Restore all connections
+            // Restore all connections using ConnectionManager
             for (Map.Entry<ConnectionPoint, List<ConnectionPoint>> entry : storedConnections.entrySet()) {
                 ConnectionPoint point = entry.getKey();
                 List<ConnectionPoint> connections = entry.getValue();
 
                 for (ConnectionPoint connectedPoint : connections) {
-                    if (point.isInput()) {
-                        connectedPoint.connected.add(point);
-                    } else {
-                        point.connected.add(connectedPoint);
-                    }
+                    connectionManager.connectPoints(point, connectedPoint);
                 }
             }
         }
 
         @Override
         public void redo() {
-            // Remove all connections before removing the node
-            for (Map.Entry<ConnectionPoint, List<ConnectionPoint>> entry : storedConnections.entrySet()) {
-                ConnectionPoint point = entry.getKey();
-                List<ConnectionPoint> connections = entry.getValue();
-
-                for (ConnectionPoint connectedPoint : connections) {
-                    if (point.isInput()) {
-                        connectedPoint.connected.remove(point);
-                    } else {
-                        point.connected.remove(connectedPoint);
-                    }
-                }
-            }
+            // Use ConnectionManager to disconnect all points
+            connectionManager.disconnectAll(node);
             nodes.remove(node);
         }
     }
@@ -836,12 +810,12 @@ public class NodeManager {
 
         @Override
         public void undo() {
-            output.connected.remove(input);
+            connectionManager.disconnectPoints(output, input);
         }
 
         @Override
         public void redo() {
-            output.connected.add(input);
+            connectionManager.connectPoints(output, input);
         }
     }
 }

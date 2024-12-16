@@ -1,6 +1,8 @@
 package pl.szajsjem;
 
 import com.beednn.Layer;
+import pl.szajsjem.data.CSVLoaderDialog;
+import pl.szajsjem.data.DataManager;
 import pl.szajsjem.elements.Node;
 
 import javax.swing.*;
@@ -20,6 +22,9 @@ public class NetworkEditorGUI extends JFrame {
     private float zoomLevel = 1.0f;
     private final Point2D.Float panOffset = new Point2D.Float(0, 0);
     private AffineTransform canvasTransform = new AffineTransform();
+    private DataManager dataManager;
+    private CSVLoaderDialog.LoadedData currentData;
+    private JFrame dataFrame;
 
     public NetworkEditorGUI() {
         setTitle("Neural Network Editor");
@@ -300,6 +305,55 @@ public class NetworkEditorGUI extends JFrame {
         canvas.repaint();
     }
 
+    private void loadData(JMenuItem manageDataItem) {
+        currentData = CSVLoaderDialog.showDialog(this);
+        if (currentData != null) {
+            // Create data manager if it doesn't exist
+            if (dataManager == null) {
+                dataManager = new DataManager();
+            }
+
+            // Update data in manager
+            dataManager.setData(currentData, currentData.inputColumnNames, currentData.outputColumnNames);
+
+            manageDataItem.setEnabled(true); // Enable "Manage Data" item
+
+            // Update status
+            statusBar.setStatus("Data loaded: " + currentData.inputs.length + " samples");
+        }
+    }
+
+    private void showDataManager() {
+        if (currentData == null || dataManager == null) {
+            JOptionPane.showMessageDialog(this,
+                    "No data loaded. Please load data first.",
+                    "No Data",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // Create frame if it doesn't exist or is disposed
+        if (dataFrame == null || !dataFrame.isDisplayable()) {
+            dataFrame = new JFrame("Data Manager");
+            dataFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            dataFrame.add(dataManager);
+            dataFrame.setSize(800, 600);
+
+            // Position relative to main window
+            Point loc = getLocation();
+            loc.translate(50, 50);
+            dataFrame.setLocation(loc);
+        }
+
+        dataFrame.setVisible(true);
+        dataFrame.toFront();
+    }
+
+    // Add getter for current data
+    public CSVLoaderDialog.LoadedData getCurrentData() {
+        return currentData;
+    }
+
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
 
@@ -382,6 +436,19 @@ public class NetworkEditorGUI extends JFrame {
         viewMenu.add(new JCheckBoxMenuItem("Show Grid"));
         viewMenu.add(new JCheckBoxMenuItem("Show Layer Properties"));
 
+
+        // Data menu
+        JMenu dataMenu = new JMenu("Data");
+        JMenuItem manageDataItem = new JMenuItem("Manage Data");
+        JMenuItem loadDataItem = new JMenuItem("Load Data...");
+        loadDataItem.addActionListener(e -> loadData(manageDataItem));
+
+        manageDataItem.addActionListener(e -> showDataManager());
+        manageDataItem.setEnabled(false); // Initially disabled until data is loaded
+
+        dataMenu.add(loadDataItem);
+        dataMenu.add(manageDataItem);
+
         // Network menu
         JMenu networkMenu = new JMenu("Network");
         networkMenu.add(new JMenuItem("Validate"));
@@ -393,6 +460,7 @@ public class NetworkEditorGUI extends JFrame {
         menuBar.add(fileMenu);
         menuBar.add(editMenu);
         menuBar.add(viewMenu);
+        menuBar.add(dataMenu);
         menuBar.add(networkMenu);
 
         return menuBar;
