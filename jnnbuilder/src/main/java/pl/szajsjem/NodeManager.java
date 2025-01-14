@@ -15,7 +15,7 @@ import java.util.*;
 
 public class NodeManager {
     private final List<Node> nodes = new ArrayList<>();
-    private final ConnectionManager connectionManager;
+    final ConnectionManager connectionManager;
     private final Set<Node> selectedNodes = new HashSet<>();
     private final Stack<UndoableAction> undoStack = new Stack<>();
     private final Stack<UndoableAction> redoStack = new Stack<>();
@@ -36,6 +36,12 @@ public class NodeManager {
         connectionManager = new ConnectionManager(new ArrayList<>(nodes));
     }
 
+    private void setHasUnsavedChanges() {
+        if (parentgui != null) {
+            parentgui.setHasUnsavedChanges(true);
+        }
+    }
+
     public void createNode(String type) {
         Node node;
         if (Node.isSpecial(type)) {
@@ -49,6 +55,7 @@ public class NodeManager {
         addUndoableAction(new CreateNodeAction(node));
         nodes.add(node);
         canvas.repaint();
+        setHasUnsavedChanges();
     }
 
     public void drawNodes(Graphics2D g2d) {
@@ -149,6 +156,7 @@ public class NodeManager {
             draggedNode.y = Math.round(draggedNode.y / 20f) * 20;
 
             updateConnectionPointHighlights(transformedPoint);
+            setHasUnsavedChanges();
         }
     }
 
@@ -169,6 +177,7 @@ public class NodeManager {
         }
 
         sourcePoint = null;
+        setHasUnsavedChanges();
     }
 
     public void handleMouseMoved(Point transformedPoint) {
@@ -360,6 +369,7 @@ public class NodeManager {
             selectedNodes.remove(node);
             canvas.repaint();  // Add this line
             notifySelectionListeners();
+            setHasUnsavedChanges();
         }
     }
 
@@ -377,6 +387,7 @@ public class NodeManager {
             selectedNodes.clear();
             canvas.repaint();
             notifySelectionListeners();
+            setHasUnsavedChanges();
         }
     }
 
@@ -425,6 +436,7 @@ public class NodeManager {
                 }
             }
             notifySelectionListeners();
+            setHasUnsavedChanges();
         }
     }
 
@@ -532,6 +544,7 @@ public class NodeManager {
 
             canvas.repaint();
             notifySelectionListeners();
+            setHasUnsavedChanges();
         }
     }
 
@@ -555,6 +568,7 @@ public class NodeManager {
             redoStack.push(action);
             canvas.repaint();  // Add this line
             notifySelectionListeners();
+            setHasUnsavedChanges();
         }
     }
 
@@ -570,6 +584,7 @@ public class NodeManager {
             undoStack.push(action);
             canvas.repaint();  // Add this line
             notifySelectionListeners();
+            setHasUnsavedChanges();
         }
     }
 

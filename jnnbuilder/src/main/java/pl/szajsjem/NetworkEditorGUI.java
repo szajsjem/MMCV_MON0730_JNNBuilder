@@ -1,6 +1,8 @@
 package pl.szajsjem;
 
 import com.beednn.Layer;
+import com.beednn.Net;
+import com.beednn.NetTrain;
 import pl.szajsjem.data.CSVLoaderDialog;
 import pl.szajsjem.data.DataManager;
 import pl.szajsjem.elements.Node;
@@ -11,7 +13,9 @@ import java.awt.event.*;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.NoninvertibleTransformException;
 import java.awt.geom.Point2D;
+import java.io.*;
 import java.util.ArrayList;
+import java.util.List;
 
 public class NetworkEditorGUI extends JFrame {
     private final JPanel canvas;
@@ -25,6 +29,11 @@ public class NetworkEditorGUI extends JFrame {
     private DataManager dataManager;
     private CSVLoaderDialog.LoadedData currentData;
     private JFrame dataFrame;
+    JMenu dataMenu = new JMenu("Data");
+    private NetTrain netTrain;
+    private final Net trainedNetwork = null;
+    private File currentFile = null;
+    private boolean hasUnsavedChanges = false;
 
     public NetworkEditorGUI() {
         setTitle("Neural Network Editor");
@@ -33,6 +42,8 @@ public class NetworkEditorGUI extends JFrame {
 
         // Main layout
         setLayout(new BorderLayout());
+
+        netTrain = new NetTrain();
 
         // Create components
         canvas = new CanvasPanel();
@@ -52,6 +63,13 @@ public class NetworkEditorGUI extends JFrame {
         add(statusBar, BorderLayout.SOUTH);
 
         setupCanvasListeners();
+
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                exitApplication();
+            }
+        });
     }
 
     public static void main(String[] args) {
@@ -354,19 +372,423 @@ public class NetworkEditorGUI extends JFrame {
         return currentData;
     }
 
+    private void createNewNetwork() {
+        // Confirm with user if there are existing nodes
+        if (!nodeManager.getAllNodes().isEmpty()) {
+            int result = JOptionPane.showConfirmDialog(this,
+                    "Creating a new network will clear the current one. Continue?",
+                    "New Network",
+                    JOptionPane.YES_NO_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+
+            if (result != JOptionPane.YES_OPTION) {
+                return;
+            }
+        }
+
+        // Clear all nodes and reset state
+        nodeManager.getAllNodes().clear();
+        nodeManager.getSelectedNodes().clear();
+
+        // Reset view
+        zoomLevel = 1.0f;
+        panOffset.x = 0;
+        panOffset.y = 0;
+
+        // Clear training settings
+        netTrain = new NetTrain();
+
+        // Clear any loaded data
+        currentData = null;
+        if (dataManager != null) {
+            dataManager.setData(null, null, null);
+        }
+
+        // Disable "Manage Data" menu item
+        for (int i = 0; i < dataMenu.getItemCount(); i++) {
+            JMenuItem item = dataMenu.getItem(i);
+            if (item != null && item.getText().equals("Manage Data")) {
+                item.setEnabled(false);
+                break;
+            }
+        }
+
+        // Update status
+        statusBar.setStatus("New network created");
+
+        // Repaint canvas
+        canvas.repaint();
+        canvas.requestFocusInWindow();
+    }
+
+    private void saveNetwork(boolean saveAs) {
+        // If never saved or Save As requested, prompt for file
+        if (currentFile == null || saveAs) {
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
+                public boolean accept(File f) {
+                    return f.isDirectory() || f.getName().toLowerCase().endsWith(".bnn");
+                }
+
+                public String getDescription() {
+                    return "Neural Network Files (*.bnn)";
+                }
+            });
+
+            if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+                File file = fileChooser.getSelectedFile();
+                // Add extension if not present
+                if (!file.getName().toLowerCase().endsWith(".bnn")) {
+                    file = new File(file.getPath() + ".bnn");
+                }
+                currentFile = file;
+            } else {
+                return; // User cancelled
+            }
+        }
+
+        try {
+            NetworkSerializer.saveToFile(currentFile.getPath(), nodeManager.getAllNodes(), netTrain);
+            statusBar.setStatus("Network saved to " + currentFile.getName());
+
+            setHasUnsavedChanges(false);  // Clear unsaved changes flag
+            updateWindowTitle();
+
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error saving network: " + e.getMessage(),
+                    "Save Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void exitApplication() {
+        if (hasUnsavedChanges) {
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "There are unsaved changes. Would you like to save before exiting?",
+                    "Unsaved Changes",
+                    JOptionPane.YES_NO_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+
+            if (choice == JOptionPane.CANCEL_OPTION) {
+                return;
+            }
+
+            if (choice == JOptionPane.YES_OPTION) {
+                saveNetwork(false);
+                // If save was cancelled, don't exit
+                if (hasUnsavedChanges) {
+                    return;
+                }
+            }
+        }
+
+        dispose();
+        System.exit(0);
+    }
+
+    public void setHasUnsavedChanges(boolean hasChanges) {
+        this.hasUnsavedChanges = hasChanges;
+        // Update window title to show unsaved status
+        updateWindowTitle();
+    }
+
+    private void updateWindowTitle() {
+        String title = "Neural Network Editor";
+        if (currentFile != null) {
+            title += " - " + currentFile.getName();
+        }
+        if (hasUnsavedChanges) {
+            title += "*";
+        }
+        setTitle(title);
+    }
+
+    private void openNetwork() {
+        // Check for unsaved changes first
+        if (hasUnsavedChanges) {
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "There are unsaved changes. Would you like to save before opening another network?",
+                    "Unsaved Changes",
+                    JOptionPane.YES_NO_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+
+            if (choice == JOptionPane.CANCEL_OPTION) {
+                return;
+            }
+
+            if (choice == JOptionPane.YES_OPTION) {
+                saveNetwork(false);
+                if (hasUnsavedChanges) {  // Save was cancelled
+                    return;
+                }
+            }
+        }
+
+        // Show file chooser
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
+            public boolean accept(File f) {
+                return f.isDirectory() || f.getName().toLowerCase().endsWith(".bnn");
+            }
+
+            public String getDescription() {
+                return "Neural Network Files (*.bnn)";
+            }
+        });
+
+        if (fileChooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        try {
+            // Load and validate the network
+            NetworkLoader.ValidationResult validation =
+                    NetworkLoader.loadAndValidate(fileChooser.getSelectedFile().getPath());
+
+            // Show warnings if any
+            if (!validation.warnings.isEmpty()) {
+                StringBuilder warningMsg = new StringBuilder("Warnings:\n\n");
+                for (String warning : validation.warnings) {
+                    warningMsg.append("• ").append(warning).append("\n");
+                }
+
+                JOptionPane.showMessageDialog(this,
+                        warningMsg.toString(),
+                        "Network Load Warnings",
+                        JOptionPane.WARNING_MESSAGE);
+            }
+
+            // If there are errors, show them and abort
+            if (validation.hasErrors()) {
+                StringBuilder errorMsg = new StringBuilder("Cannot load network due to the following errors:\n\n");
+                for (String error : validation.errors) {
+                    errorMsg.append("• ").append(error).append("\n");
+                }
+
+                JOptionPane.showMessageDialog(this,
+                        errorMsg.toString(),
+                        "Network Load Error",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            // Clear existing network
+            nodeManager.getAllNodes().clear();
+            nodeManager.getSelectedNodes().clear();
+
+            // Load the new network
+            nodeManager.getAllNodes().addAll(validation.networkData.nodes);
+            netTrain = validation.networkData.netTrain;
+
+            // Update file reference and UI
+            currentFile = fileChooser.getSelectedFile();
+            setHasUnsavedChanges(false);
+            updateWindowTitle();
+
+            // Reset view to show all nodes
+            fitToWindow();
+
+            // Update status
+            statusBar.setStatus("Loaded network from " + currentFile.getName());
+            canvas.repaint();
+
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error loading network: " + e.getMessage(),
+                    "Load Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void exportBeeDNNModel() {
+        // Check if there are any nodes
+        if (trainedNetwork == null) {
+            JOptionPane.showMessageDialog(this,
+                    "No network to export, please train it first",
+                    "Export Error",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        // Show file chooser
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
+            public boolean accept(File f) {
+                return f.isDirectory() || f.getName().toLowerCase().endsWith(".beednn");
+            }
+
+            public String getDescription() {
+                return "BeeDNN Model Files (*.beednn)";
+            }
+        });
+
+        if (fileChooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        File file = fileChooser.getSelectedFile();
+        if (!file.getName().toLowerCase().endsWith(".beednn")) {
+            file = new File(file.getPath() + ".beednn");
+        }
+
+        try {
+            // Get the Net instance and save its string representation
+
+            // TODO: Add layers to net in correct order
+            String modelData = "not implemented";//todo trainedNetwork.saveAsLayer();
+
+            // Write to file
+            try (FileWriter writer = new FileWriter(file)) {
+                writer.write(modelData);
+            }
+
+            statusBar.setStatus("Model exported to " + file.getName());
+
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error exporting model: " + e.getMessage(),
+                    "Export Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void exportTrainedJar() {
+        // Placeholder for future implementation
+        JOptionPane.showMessageDialog(this,
+                "Export as executable JAR will be implemented in a future update.",
+                "Not Implemented",
+                JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void importBeeDNNModel() {
+        // Check for unsaved changes first
+        if (hasUnsavedChanges) {
+            int choice = JOptionPane.showConfirmDialog(this,
+                    "There are unsaved changes. Would you like to save before importing?",
+                    "Unsaved Changes",
+                    JOptionPane.YES_NO_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE);
+
+            if (choice == JOptionPane.CANCEL_OPTION) {
+                return;
+            }
+
+            if (choice == JOptionPane.YES_OPTION) {
+                saveNetwork(false);
+                if (hasUnsavedChanges) {  // Save was cancelled
+                    return;
+                }
+            }
+        }
+
+        // Show file chooser
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
+            public boolean accept(File f) {
+                return f.isDirectory() || f.getName().toLowerCase().endsWith(".beednn");
+            }
+
+            public String getDescription() {
+                return "BeeDNN Model Files (*.beednn)";
+            }
+        });
+
+        if (fileChooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        try {
+            // Read the model data
+            String modelData = "";
+            try (BufferedReader reader = new BufferedReader(new FileReader(fileChooser.getSelectedFile()))) {
+                StringBuilder content = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    content.append(line).append("\n");
+                }
+                modelData = content.toString();
+            }
+
+            // Create new layer using the model data
+            com.beednn.Layer layer = com.beednn.Layer.fromString(modelData);
+            if (layer != null) {
+                // Create a new node
+                Node node = new Node("ImportedModel");
+                node.x = 200;
+                node.y = 100;
+                nodeManager.getAllNodes().add(node);
+
+                // Update view
+                setHasUnsavedChanges(true);
+                canvas.repaint();
+                statusBar.setStatus("Model imported successfully");
+            }
+
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error importing model: " + e.getMessage(),
+                    "Import Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
 
         // File menu
         JMenu fileMenu = new JMenu("File");
-        fileMenu.add(new JMenuItem("New Network"));
-        fileMenu.add(new JMenuItem("Open..."));
-        fileMenu.add(new JMenuItem("Save"));
-        fileMenu.add(new JMenuItem("Save As..."));
+
+        JMenuItem newNetworkItem = new JMenuItem("New Network");
+        newNetworkItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK));
+        newNetworkItem.addActionListener(e -> createNewNetwork());
+        fileMenu.add(newNetworkItem);
+
+        JMenuItem openItem = new JMenuItem("Open...");
+        openItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
+        openItem.addActionListener(e -> openNetwork());
+        fileMenu.add(openItem);
+
+        JMenuItem saveItem = new JMenuItem("Save");
+        saveItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK));
+        saveItem.addActionListener(e -> saveNetwork(false));
+        fileMenu.add(saveItem);
+
+        JMenuItem saveAsItem = new JMenuItem("Save As...");
+        saveAsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S,
+                InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+        saveAsItem.addActionListener(e -> saveNetwork(true));
+        fileMenu.add(saveAsItem);
+
         fileMenu.addSeparator();
-        fileMenu.add(new JMenuItem("Export..."));
+
+        JMenu exportMenu = new JMenu("Export");
+
+        JMenuItem exportModelItem = new JMenuItem("BeeDNN Model...");
+        exportModelItem.addActionListener(e -> exportBeeDNNModel());
+        exportMenu.add(exportModelItem);
+
+        JMenuItem exportJarItem = new JMenuItem("Trained Network JAR...");
+        exportJarItem.addActionListener(e -> exportTrainedJar());
+        exportMenu.add(exportJarItem);
+
+        fileMenu.add(exportMenu);
+
+        // Import submenu
+        JMenu importMenu = new JMenu("Import");
+
+        JMenuItem importModelItem = new JMenuItem("BeeDNN Model...");
+        importModelItem.addActionListener(e -> importBeeDNNModel());
+        importMenu.add(importModelItem);
+
+        fileMenu.add(importMenu);
+
         fileMenu.addSeparator();
-        fileMenu.add(new JMenuItem("Exit"));
+
+        JMenuItem exitItem = new JMenuItem("Exit");
+        exitItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Q, InputEvent.CTRL_DOWN_MASK));
+        exitItem.addActionListener(e -> exitApplication());
+        fileMenu.add(exitItem);
 
         // Edit menu
         JMenu editMenu = new JMenu("Edit");
@@ -434,11 +856,9 @@ public class NetworkEditorGUI extends JFrame {
         viewMenu.add(fitToWindowItem);
         viewMenu.addSeparator();
         viewMenu.add(new JCheckBoxMenuItem("Show Grid"));
-        viewMenu.add(new JCheckBoxMenuItem("Show Layer Properties"));
 
 
         // Data menu
-        JMenu dataMenu = new JMenu("Data");
         JMenuItem manageDataItem = new JMenuItem("Manage Data");
         JMenuItem loadDataItem = new JMenuItem("Load Data...");
         loadDataItem.addActionListener(e -> loadData(manageDataItem));
@@ -451,9 +871,49 @@ public class NetworkEditorGUI extends JFrame {
 
         // Network menu
         JMenu networkMenu = new JMenu("Network");
-        networkMenu.add(new JMenuItem("Validate"));
-        networkMenu.add(new JMenuItem("Auto-Layout"));
-        networkMenu.add(new JMenuItem("Training Settings..."));
+
+        JMenuItem validateItem = new JMenuItem("Validate");
+        validateItem.addActionListener(e -> {
+            List<String> errors = nodeManager.connectionManager.validateNetwork();
+            if (errors.isEmpty()) {
+                JOptionPane.showMessageDialog(this,
+                        "Network validation successful: No issues found.",
+                        "Validation Result",
+                        JOptionPane.INFORMATION_MESSAGE);
+            } else {
+                StringBuilder message = new StringBuilder("Network validation found the following issues:\n\n");
+                for (String error : errors) {
+                    message.append("• ").append(error).append("\n");
+                }
+                JOptionPane.showMessageDialog(this,
+                        message.toString(),
+                        "Validation Result",
+                        JOptionPane.WARNING_MESSAGE);
+            }
+        });
+
+        JMenuItem autoLayoutItem = new JMenuItem("Auto-Layout");
+        autoLayoutItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_L, InputEvent.CTRL_DOWN_MASK));
+        autoLayoutItem.addActionListener(e -> {
+            // Call auto-layout
+            NetworkLayout.autoLayout(nodeManager.getAllNodes());
+
+            // Reset view to fit all nodes
+            fitToWindow();
+
+            // Repaint canvas
+            canvas.repaint();
+        });
+
+        JMenuItem trainingSettingsItem = new JMenuItem("Training Settings...");
+        trainingSettingsItem.addActionListener(e -> {
+            TrainingSettingsDialog dialog = new TrainingSettingsDialog(this, netTrain);
+            dialog.showDialog();
+        });
+
+        networkMenu.add(validateItem);
+        networkMenu.add(autoLayoutItem);
+        networkMenu.add(trainingSettingsItem);
         networkMenu.addSeparator();
         networkMenu.add(new JMenuItem("Start Training"));
 
