@@ -140,6 +140,222 @@ public class ConnectionManager {
         return false;
     }
 
+    boolean isInSpecialSubgraph(Node node) {
+        return findSubgraphParent(node.prev) != null;
+    }
+
+    private List<Node> findRealInputNodes() {
+        return nodes.stream()
+                .filter(n -> n.prev.connected.isEmpty() && !isInSpecialSubgraph(n))
+                .toList();
+    }
+
+    private List<Node> findRealOutputNodes() {
+        return nodes.stream()
+                .filter(n -> n.next.connected.isEmpty() && !isInSpecialSubgraph(n))
+                .toList();
+    }
+
+    public List<String> validateNetwork() {
+        List<String> errors = new ArrayList<>();
+
+        // Find actual input and output nodes
+        List<Node> inputNodes = findRealInputNodes();
+        List<Node> outputNodes = findRealOutputNodes();
+
+        // Validate input/output requirements
+        if (inputNodes.isEmpty()) {
+            errors.add("Network must have at least one input node outside of special subgraphs");
+        }
+        if (outputNodes.isEmpty()) {
+            errors.add("Network must have at least one output node outside of special subgraphs");
+        }
+
+        // Check for disconnected nodes
+        for (Node node : nodes) {
+            boolean hasConnections = !node.prev.connected.isEmpty() ||
+                    !node.next.connected.isEmpty();
+
+            if (node instanceof SpecialNode specialNode) {
+                for (ConnectionPoint sp : specialNode.specialPoints) {
+                    if (!sp.connected.isEmpty()) {
+                        hasConnections = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!hasConnections && !inputNodes.contains(node) && !outputNodes.contains(node)) {
+                errors.add("Node '" + node.getLabel() + "' is disconnected");
+            }
+        }
+
+        // Validate paths from inputs to outputs
+        for (Node input : inputNodes) {
+            if (!canReachAnyOutput(input, outputNodes)) {
+                errors.add("Input node '" + input.getLabel() +
+                        "' has no path to any output");
+            }
+        }
+
+        // Check for unresolved parallel paths
+        errors.addAll(validateParallelPaths());
+
+        // Check special subgraph connectivity
+        errors.addAll(validateSpecialSubgraphs());
+
+        return errors;
+    }
+
+    private boolean canReachAnyOutput(Node start, List<Node> outputNodes) {
+        Set<Node> visited = new HashSet<>();
+        Queue<Node> queue = new LinkedList<>();
+        queue.add(start);
+
+        while (!queue.isEmpty()) {
+            Node current = queue.poll();
+
+            if (outputNodes.contains(current)) {
+                return true;
+            }
+
+            if (visited.add(current)) {
+                // Add nodes connected through next point
+                for (ConnectionPoint connected : current.next.connected) {
+                    queue.add(connected.parent);
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private List<String> validateSpecialSubgraphs() {
+        List<String> errors = new ArrayList<>();
+        Map<SpecialNode, Set<Node>> subgraphs = findAllSubgraphs();
+
+        for (Map.Entry<SpecialNode, Set<Node>> entry : subgraphs.entrySet()) {
+            SpecialNode specialNode = entry.getKey();
+            Set<Node> subgraphNodes = entry.getValue();
+
+            // Check each node in the subgraph
+            for (Node node : subgraphNodes) {
+                if (node == specialNode) continue; // Skip the special node itself
+
+                // Check inputs
+                if (node.prev.connected.isEmpty()) {
+                    // Node has no inputs - check if it's connected to special node's output
+                    boolean hasSpecialInput = specialNode.specialPoints.stream()
+                            .filter(sp -> !sp.isInput())
+                            .anyMatch(sp -> sp.connected.stream()
+                                    .anyMatch(cp -> cp.parent == node));
+
+                    if (!hasSpecialInput) {
+                        errors.add(String.format(
+                                "Node '%s' in subgraph of special node '%s' has no inputs",
+                                node.getLabel(), specialNode.getLabel()
+                        ));
+                    }
+                }
+
+                // Check outputs
+                if (node.next.connected.isEmpty()) {
+                    // Node has no outputs - check if it's connected to special node's input
+                    boolean hasSpecialOutput = specialNode.specialPoints.stream()
+                            .filter(ConnectionPoint::isInput)
+                            .anyMatch(sp -> node.next.connected.contains(sp));
+
+                    if (!hasSpecialOutput) {
+                        errors.add(String.format(
+                                "Node '%s' in subgraph of special node '%s' has no outputs",
+                                node.getLabel(), specialNode.getLabel()
+                        ));
+                    }
+                }
+
+                // Ensure node is not being used as network input/output
+                if (findRealInputNodes().contains(node)) {
+                    errors.add(String.format(
+                            "Node '%s' in subgraph of special node '%s' cannot be used as network input",
+                            node.getLabel(), specialNode.getLabel()
+                    ));
+                }
+                if (findRealOutputNodes().contains(node)) {
+                    errors.add(String.format(
+                            "Node '%s' in subgraph of special node '%s' cannot be used as network output",
+                            node.getLabel(), specialNode.getLabel()
+                    ));
+                }
+            }
+        }
+
+        return errors;
+    }
+
+    private Map<SpecialNode, Set<Node>> findAllSubgraphs() {
+        Map<SpecialNode, Set<Node>> subgraphs = new HashMap<>();
+
+        // Find all special nodes
+        for (Node node : nodes) {
+            if (node instanceof SpecialNode specialNode) {
+                Set<Node> subgraphNodes = findSubgraphNodes(specialNode);
+                if (!subgraphNodes.isEmpty()) {
+                    subgraphs.put(specialNode, subgraphNodes);
+                }
+            }
+        }
+
+        return subgraphs;
+    }
+
+    private Set<Node> findSubgraphNodes(SpecialNode specialNode) {
+        Set<Node> subgraphNodes = new HashSet<>();
+        Queue<Node> queue = new LinkedList<>();
+
+        // Start with nodes directly connected to special points
+        for (ConnectionPoint sp : specialNode.specialPoints) {
+            sp.connected.stream()
+                    .map(cp -> cp.parent)
+                    .forEach(queue::add);
+        }
+
+        while (!queue.isEmpty()) {
+            Node current = queue.poll();
+            if (subgraphNodes.add(current)) {
+                // Add nodes connected through regular connections
+                current.next.connected.stream()
+                        .map(cp -> cp.parent)
+                        .filter(n -> !(n instanceof SpecialNode) || n == specialNode)
+                        .forEach(queue::add);
+
+                current.prev.connected.stream()
+                        .map(cp -> cp.parent)
+                        .filter(n -> !(n instanceof SpecialNode) || n == specialNode)
+                        .forEach(queue::add);
+            }
+        }
+
+        return subgraphNodes;
+    }
+
+    private List<String> validateParallelPaths() {
+        List<String> errors = new ArrayList<>();
+
+        // Find all cases where a node has multiple inputs or outputs
+        for (Node node : nodes) {
+            if (node.prev.connected.size() > 1) {
+                // Check if this node is explicitly marked as parallel
+                if (!node.getType().toLowerCase().contains("parallel")) {
+                    errors.add("Node '" + node.getLabel() +
+                            "' receives multiple inputs but is not a parallel layer. " +
+                            "Consider using a parallel layer with appropriate reduction.");
+                }
+            }
+        }
+
+        return errors;
+    }
+
 
     /**
      * Finds the special node parent (if any) of the subgraph containing this connection point's node
@@ -507,112 +723,5 @@ public class ConnectionManager {
         for (ConnectionPoint connected : new ArrayList<>(point.connected)) {
             disconnectPoints(point, connected);
         }
-    }
-
-    /**
-     * Validates the entire network structure
-     */
-    public List<String> validateNetwork() {
-        List<String> errors = new ArrayList<>();
-
-        // Find nodes with no connections
-        for (Node node : nodes) {
-            boolean hasConnections = !node.prev.connected.isEmpty() ||
-                    !node.next.connected.isEmpty();
-
-            // Check special point connections for special nodes
-            if (node instanceof SpecialNode specialNode) {
-                for (ConnectionPoint sp : specialNode.specialPoints) {
-                    if (!sp.connected.isEmpty()) {
-                        hasConnections = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!hasConnections) {
-                errors.add("Node '" + node.getLabel() + "' is disconnected");
-            }
-        }
-
-        // Validate input/output structure
-        List<Node> inputNodes = findInputNodes();
-        List<Node> outputNodes = findOutputNodes();
-
-        if (inputNodes.isEmpty()) {
-            errors.add("Network has no input nodes");
-        }
-        if (outputNodes.isEmpty()) {
-            errors.add("Network has no output nodes");
-        }
-
-        // Validate paths from inputs to outputs
-        for (Node input : inputNodes) {
-            if (!canReachOutput(input)) {
-                errors.add("Input node '" + input.getLabel() +
-                        "' has no path to any output");
-            }
-        }
-
-        return errors;
-    }
-
-    private List<Node> findInputNodes() {
-        return nodes.stream()
-                .filter(n -> n.prev.connected.isEmpty() &&
-                        (!(n instanceof SpecialNode) ||
-                                ((SpecialNode) n).specialPoints.stream()
-                                        .filter(ConnectionPoint::isInput)
-                                        .allMatch(sp -> sp.connected.isEmpty())))
-                .toList();
-    }
-
-    private List<Node> findOutputNodes() {
-        return nodes.stream()
-                .filter(n -> n.next.connected.isEmpty() &&
-                        (!(n instanceof SpecialNode) ||
-                                ((SpecialNode) n).specialPoints.stream()
-                                        .filter(p -> !p.isInput())
-                                        .allMatch(sp -> sp.connected.isEmpty())))
-                .toList();
-    }
-
-    private boolean canReachOutput(Node start) {
-        Set<Node> visited = new HashSet<>();
-        Queue<Node> queue = new LinkedList<>();
-        queue.add(start);
-
-        while (!queue.isEmpty()) {
-            Node current = queue.poll();
-
-            // Check if this is an output node
-            if (current.next.connected.isEmpty() &&
-                    (!(current instanceof SpecialNode) ||
-                            ((SpecialNode) current).specialPoints.stream()
-                                    .filter(p -> !p.isInput())
-                                    .allMatch(sp -> sp.connected.isEmpty()))) {
-                return true;
-            }
-
-            if (visited.add(current)) {
-                // Add nodes connected to next point
-                for (ConnectionPoint connected : current.next.connected) {
-                    queue.add(connected.parent);
-                }
-
-                // Add nodes connected via special points
-                if (current instanceof SpecialNode specialNode) {
-                    for (ConnectionPoint sp : specialNode.specialPoints) {
-                        if (!sp.isInput()) {
-                            for (ConnectionPoint connected : sp.connected) {
-                                queue.add(connected.parent);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return false;
     }
 }

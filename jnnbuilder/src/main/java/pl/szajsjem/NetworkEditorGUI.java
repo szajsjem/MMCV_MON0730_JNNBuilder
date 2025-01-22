@@ -8,6 +8,8 @@ import pl.szajsjem.data.DataManager;
 import pl.szajsjem.elements.Node;
 
 import javax.swing.*;
+import javax.swing.filechooser.FileSystemView;
+import javax.swing.filechooser.FileView;
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.geom.AffineTransform;
@@ -31,7 +33,7 @@ public class NetworkEditorGUI extends JFrame {
     private JFrame dataFrame;
     JMenu dataMenu = new JMenu("Data");
     private NetTrain netTrain;
-    private final Net trainedNetwork = null;
+    private Net trainedNetwork = null;
     private File currentFile = null;
     private boolean hasUnsavedChanges = false;
 
@@ -421,19 +423,54 @@ public class NetworkEditorGUI extends JFrame {
         canvas.requestFocusInWindow();
     }
 
+    private static JFileChooser getjFileChooser() {
+        JFileChooser fileChooser = new JFileChooser() {
+            @Override
+            protected void setup(FileSystemView view) {
+                putClientProperty("FileChooser.useShellFolder", Boolean.FALSE);
+                super.setup(view);
+            }
+        };
+
+        // Use a simple file view that doesn't use system icons
+        fileChooser.setFileView(new FileView() {
+            @Override
+            public String getName(File f) {
+                return f.getName();
+            }
+
+            @Override
+            public String getDescription(File f) {
+                return f.getName();
+            }
+
+            @Override
+            public String getTypeDescription(File f) {
+                return f.isDirectory() ? "Folder" : "File";
+            }
+
+            @Override
+            public Icon getIcon(File f) {
+                // Return a simple default icon based on whether it's a directory or file
+                return UIManager.getIcon(f.isDirectory() ? "FileView.directoryIcon" : "FileView.fileIcon");
+            }
+        });
+        fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
+            public boolean accept(File f) {
+                return f.isDirectory() || f.getName().toLowerCase().endsWith(".bnn");
+            }
+
+            public String getDescription() {
+                return "Neural Network Files (*.bnn)";
+            }
+        });
+        return fileChooser;
+    }
+
     private void saveNetwork(boolean saveAs) {
         // If never saved or Save As requested, prompt for file
         if (currentFile == null || saveAs) {
-            JFileChooser fileChooser = new JFileChooser();
-            fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
-                public boolean accept(File f) {
-                    return f.isDirectory() || f.getName().toLowerCase().endsWith(".bnn");
-                }
-
-                public String getDescription() {
-                    return "Neural Network Files (*.bnn)";
-                }
-            });
+            JFileChooser fileChooser = getjFileChooser();
 
             if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
                 File file = fileChooser.getSelectedFile();
@@ -526,16 +563,7 @@ public class NetworkEditorGUI extends JFrame {
         }
 
         // Show file chooser
-        JFileChooser fileChooser = new JFileChooser();
-        fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
-            public boolean accept(File f) {
-                return f.isDirectory() || f.getName().toLowerCase().endsWith(".bnn");
-            }
-
-            public String getDescription() {
-                return "Neural Network Files (*.bnn)";
-            }
-        });
+        JFileChooser fileChooser = getjFileChooser();
 
         if (fileChooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
             return;
@@ -733,6 +761,50 @@ public class NetworkEditorGUI extends JFrame {
         }
     }
 
+    private void startTraining() {
+        // Check if data is loaded
+        if (currentData == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Please load training data first.",
+                    "No Training Data",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // Validate network
+        List<String> errors = nodeManager.connectionManager.validateNetwork();
+        if (!errors.isEmpty()) {
+            StringBuilder message = new StringBuilder("Cannot start training due to the following issues:\n\n");
+            for (String error : errors) {
+                message.append("• ").append(error).append("\n");
+            }
+            JOptionPane.showMessageDialog(this,
+                    message.toString(),
+                    "Validation Error",
+                    JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        try {
+            // Create network serializer
+            NetworkStructureSerializer serializer = new NetworkStructureSerializer(nodeManager.getAllNodes());
+
+            // Create and show training dialog
+            TrainingDialog dialog = new TrainingDialog(this, serializer, currentData, netTrain);
+            dialog.setVisible(true);
+
+            // Store trained network if training completed successfully
+            trainedNetwork = dialog.getTrainedNetwork();
+
+
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                    "Error starting training: " + e.getMessage(),
+                    "Training Error",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
 
@@ -915,7 +987,9 @@ public class NetworkEditorGUI extends JFrame {
         networkMenu.add(autoLayoutItem);
         networkMenu.add(trainingSettingsItem);
         networkMenu.addSeparator();
-        networkMenu.add(new JMenuItem("Start Training"));
+        JMenuItem startTrainingItem = new JMenuItem("Start Training");
+        startTrainingItem.addActionListener(e -> startTraining());
+        networkMenu.add(startTrainingItem);
 
         menuBar.add(fileMenu);
         menuBar.add(editMenu);
