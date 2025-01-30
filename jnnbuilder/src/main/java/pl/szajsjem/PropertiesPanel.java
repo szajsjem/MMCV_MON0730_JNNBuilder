@@ -70,7 +70,7 @@ public class PropertiesPanel extends JPanel {
         // Parse the usage string
         String usage = Layer.getLayerUsage(type);
         String[] lines = usage.split("\n");
-        if (lines.length < 3) {
+        if (lines.length > 3) {
             contentPanel.add(new JLabel("Invalid layer usage format"));
             revalidate();
             repaint();
@@ -80,93 +80,96 @@ public class PropertiesPanel extends JPanel {
         // Add summary
         contentPanel.add(new JLabel(lines[0]));
         contentPanel.add(Box.createVerticalStrut(10));
+        if (lines.length > 1) {
+            // Process string parameters
+            String[] stringDescs = lines[1].split(";");
+            if (stringDescs.length > 0) {
+                for (int i = 0; i < stringDescs.length; i++) {
+                    JPanel paramPanel = new JPanel(new BorderLayout());
+                    String desc = stringDescs[i].trim();
 
-        // Process string parameters
-        String[] stringDescs = lines[1].split(";");
-        if (stringDescs.length > 0) {
-            for (int i = 0; i < stringDescs.length; i++) {
-                JPanel paramPanel = new JPanel(new BorderLayout());
-                String desc = stringDescs[i].trim();
-
-                if (desc.length() < 3) continue;
-                if (desc.toLowerCase().contains("layer")) {
-                    // Add hidden field to maintain parameter order
-                    JTextField hiddenField = new JTextField();
-                    hiddenField.setVisible(false);
-                    stringFields.add(hiddenField);
-                    continue;
-                }
-
-                paramPanel.add(new JLabel(desc), BorderLayout.NORTH);
-
-                JComboBox<String> combo;
-
-                if (desc.contains("Activation")) {
-                    combo = new JComboBox<>(Layer.getAvailableActivations());
-                } else if (desc.contains("Reduction")) {
-                    combo = new JComboBox<>(Layer.getAvailableReductions());
-                } else if (desc.contains("Initializer")) {
-                    combo = new JComboBox<>(Layer.getAvailableInitializers());
-                } else {
-                    combo = null;
-                }
-                if (combo != null) {
-                    String value = getCommonStringParam(selectedNodes, i);
-                    if (!value.equals("...")) {
-                        combo.setSelectedItem(value);
+                    if (desc.length() < 3) continue;
+                    if (desc.toLowerCase().contains("layer")) {
+                        // Add hidden field to maintain parameter order
+                        JTextField hiddenField = new JTextField();
+                        hiddenField.setVisible(false);
+                        stringFields.add(hiddenField);
+                        continue;
                     }
-                    int finalI1 = i;
-                    combo.addActionListener(e -> {
-                        stringFields.get(finalI1).setText((String) combo.getSelectedItem());
-                        updateTimer.restart();
-                    });
 
-                    // Add hidden text field for value storage
-                    JTextField hiddenField = new JTextField();
-                    hiddenField.setVisible(false);
-                    stringFields.add(hiddenField);
+                    paramPanel.add(new JLabel(desc), BorderLayout.NORTH);
 
-                    paramPanel.add(combo, BorderLayout.CENTER);
-                } else {
-                    // Regular string parameter
+                    JComboBox<String> combo;
+
+                    if (desc.contains("Activation")) {
+                        combo = new JComboBox<>(Layer.getAvailableActivations());
+                    } else if (desc.contains("Reduction")) {
+                        combo = new JComboBox<>(Layer.getAvailableReductions());
+                    } else if (desc.contains("Initializer")) {
+                        combo = new JComboBox<>(Layer.getAvailableInitializers());
+                    } else {
+                        combo = null;
+                    }
+                    if (combo != null) {
+                        String value = getCommonStringParam(selectedNodes, i);
+                        if (!value.equals("...")) {
+                            combo.setSelectedItem(value);
+                        }
+                        int finalI1 = i;
+                        combo.addActionListener(e -> {
+                            stringFields.get(finalI1).setText((String) combo.getSelectedItem());
+                            updateTimer.restart();
+                        });
+
+                        // Add hidden text field for value storage
+                        JTextField hiddenField = new JTextField();
+                        hiddenField.setVisible(false);
+                        stringFields.add(hiddenField);
+
+                        paramPanel.add(combo, BorderLayout.CENTER);
+                    } else {
+                        // Regular string parameter
+                        JTextField field = new JTextField(20);
+                        stringFields.add(field);
+
+                        // Set initial value
+                        String value = getCommonStringParam(selectedNodes, i);
+                        field.setText(value);
+
+                        // Add change listener
+                        field.getDocument().addDocumentListener(new DelayedUpdateListener());
+
+                        paramPanel.add(field, BorderLayout.CENTER);
+                    }
+
+                    contentPanel.add(paramPanel);
+                    contentPanel.add(Box.createVerticalStrut(5));
+                }
+            }
+        }
+
+        if (lines.length > 2) {
+            String[] floatDescs = lines[2].split(";");
+            if (floatDescs.length > 0 && Arrays.stream(floatDescs).anyMatch(t -> t.length() > 3)) {
+                contentPanel.add(new JLabel("Numeric Parameters:"));
+                for (int i = 0; i < floatDescs.length; i++) {
+                    JPanel paramPanel = new JPanel(new BorderLayout());
+                    paramPanel.add(new JLabel(floatDescs[i].trim()), BorderLayout.NORTH);
+
                     JTextField field = new JTextField(20);
-                    stringFields.add(field);
+                    floatFields.add(field);
 
                     // Set initial value
-                    String value = getCommonStringParam(selectedNodes, i);
+                    String value = getCommonFloatParam(selectedNodes, i);
                     field.setText(value);
 
                     // Add change listener
                     field.getDocument().addDocumentListener(new DelayedUpdateListener());
 
                     paramPanel.add(field, BorderLayout.CENTER);
+                    contentPanel.add(paramPanel);
+                    contentPanel.add(Box.createVerticalStrut(5));
                 }
-
-                contentPanel.add(paramPanel);
-                contentPanel.add(Box.createVerticalStrut(5));
-            }
-        }
-
-        String[] floatDescs = lines[2].split(";");
-        if (floatDescs.length > 0 && Arrays.stream(floatDescs).anyMatch(t -> t.length() > 3)) {
-            contentPanel.add(new JLabel("Numeric Parameters:"));
-            for (int i = 0; i < floatDescs.length; i++) {
-                JPanel paramPanel = new JPanel(new BorderLayout());
-                paramPanel.add(new JLabel(floatDescs[i].trim()), BorderLayout.NORTH);
-
-                JTextField field = new JTextField(20);
-                floatFields.add(field);
-
-                // Set initial value
-                String value = getCommonFloatParam(selectedNodes, i);
-                field.setText(value);
-
-                // Add change listener
-                field.getDocument().addDocumentListener(new DelayedUpdateListener());
-
-                paramPanel.add(field, BorderLayout.CENTER);
-                contentPanel.add(paramPanel);
-                contentPanel.add(Box.createVerticalStrut(5));
             }
         }
 

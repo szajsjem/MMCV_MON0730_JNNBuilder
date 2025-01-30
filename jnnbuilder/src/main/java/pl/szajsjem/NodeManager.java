@@ -33,7 +33,7 @@ public class NodeManager {
     public NodeManager(JPanel canvas, NetworkEditorGUI networkEditorGUI) {
         this.canvas = canvas;
         this.parentgui = networkEditorGUI;
-        connectionManager = new ConnectionManager(new ArrayList<>(nodes));
+        connectionManager = new ConnectionManager((ArrayList<Node>) nodes);
     }
 
     private void setHasUnsavedChanges() {

@@ -13,11 +13,12 @@ public class TestInputPanel extends JPanel {
     private final List<JTextField> inputFields = new ArrayList<>();
     private final JPanel outputPanel;
     private final CSVLoaderDialog.LoadedData trainingData;
-    private Net network;
+    private final TrainingDialog trainingDialog;
 
-    public TestInputPanel(CSVLoaderDialog.LoadedData data) {
+    public TestInputPanel(CSVLoaderDialog.LoadedData data, TrainingDialog trainingDialog) {
         super(new BorderLayout(10, 10));
         this.trainingData = data;
+        this.trainingDialog = trainingDialog;
         setBorder(BorderFactory.createTitledBorder("Test Input"));
 
         // Create input fields panel
@@ -65,18 +66,8 @@ public class TestInputPanel extends JPanel {
         testButton.addActionListener(e -> runTest());
     }
 
-    public void setNetwork(Net network) {
-        this.network = network;
-    }
-
     private void runTest() {
-        if (network == null) {
-            JOptionPane.showMessageDialog(this,
-                    "Network not available. Please start training first.",
-                    "Error",
-                    JOptionPane.ERROR_MESSAGE);
-            return;
-        }
+        Net network = trainingDialog.getTrainedNetwork();
 
         try {
             // Collect input values

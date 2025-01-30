@@ -1,5 +1,6 @@
 package pl.szajsjem;
 
+import com.beednn.Layer;
 import com.beednn.Net;
 import pl.szajsjem.elements.Node;
 
@@ -14,7 +15,88 @@ public class NetworkStructureSerializer {
     }
 
     public Net buildNetwork() {
-        return null;//todo
+        // First validate the network structure
+        ConnectionManager connectionManager = new ConnectionManager(new ArrayList<>(nodes));
+        List<String> errors = connectionManager.validateNetwork();
+        if (!errors.isEmpty()) {
+            throw new IllegalStateException("Invalid network structure: " + String.join(", ", errors));
+        }
+
+        // Create new Net instance
+        Net network = new Net();
+
+        // Get the list of layers in correct order using serializeNetwork
+        List<CompositeLayer> layers = serializeNetwork(connectionManager);
+
+        // Helper function to recursively add layers and get their layer references
+        addLayersToNet(network, layers);
+
+        return network;
+    }
+
+    // Returns layer pointer for referencing in parent layers
+    private String addLayersToNet(Net network, List<CompositeLayer> layers) {
+        StringBuilder layerPtrs = new StringBuilder();
+
+        for (CompositeLayer compositeLayer : layers) {
+            // If this is a parallel layer, handle specially
+            if (compositeLayer.type.equals("parallel")) {
+                // Process all child paths and collect their layer pointers
+                List<String> childPtrs = new ArrayList<>();
+                for (CompositeLayer child : compositeLayer.children) {
+                    String ptr = addLayersToNet(network, Collections.singletonList(child));
+                    if (ptr != null && !ptr.isEmpty()) {
+                        childPtrs.add(ptr);
+                    }
+                }
+
+                // Create parallel layer with reduction type and collected layer pointers
+                String reductionType = compositeLayer.reduction != null ? compositeLayer.reduction : "sum";
+                Layer parallelLayer = new Layer("LayerParallel", new float[0],
+                        reductionType + "," + String.join(",", childPtrs));
+                network.addLayer(parallelLayer);
+
+                if (layerPtrs.length() > 0) layerPtrs.append(",");
+                layerPtrs.append(parallelLayer.getNativePtr());
+            } else {
+                // Normal layer - create and add it
+                Layer layer = createLayer(compositeLayer);
+                if (layer != null) {
+                    network.addLayer(layer);
+                    if (layerPtrs.length() > 0) layerPtrs.append(",");
+                    layerPtrs.append(layer.getNativePtr());
+                }
+
+                // Process children recursively
+                if (!compositeLayer.children.isEmpty()) {
+                    String childPtrs = addLayersToNet(network, compositeLayer.children);
+                    if (childPtrs != null && !childPtrs.isEmpty()) {
+                        if (layerPtrs.length() > 0) layerPtrs.append(",");
+                        layerPtrs.append(childPtrs);
+                    }
+                }
+            }
+        }
+
+        return layerPtrs.toString();
+    }
+
+    private Layer createLayer(CompositeLayer compositeLayer) {
+        if (compositeLayer.sourceNode == null) {
+            return null;  // Skip empty composite layers
+        }
+
+        // Get parameters from source node
+        String type = compositeLayer.sourceNode.getType();
+        float[] floatParams = compositeLayer.sourceNode.getFloatParams();
+        String[] stringParams = compositeLayer.sourceNode.getStringParams();
+
+        // Create layer using parameters
+        try {
+            return new Layer(type, floatParams, String.join(";", stringParams));
+        } catch (Exception e) {
+            throw new IllegalStateException("Error creating layer of type " + type + ": " + e.getMessage());
+        }
     }
 
     public List<CompositeLayer> serializeNetwork(ConnectionManager cm) {

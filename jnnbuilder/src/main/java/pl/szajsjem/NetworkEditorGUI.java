@@ -782,7 +782,7 @@ public class NetworkEditorGUI extends JFrame {
                     message.toString(),
                     "Validation Error",
                     JOptionPane.ERROR_MESSAGE);
-            return;
+            //return;
         }
 
         try {
@@ -946,21 +946,34 @@ public class NetworkEditorGUI extends JFrame {
 
         JMenuItem validateItem = new JMenuItem("Validate");
         validateItem.addActionListener(e -> {
+            NetworkValidator.ValidationResult validation = NetworkValidator.validate(nodeManager.getAllNodes(), netTrain);
+
             List<String> errors = nodeManager.connectionManager.validateNetwork();
-            if (errors.isEmpty()) {
+            if (!validation.warnings.isEmpty()) {
+                StringBuilder warningMsg = new StringBuilder("Warnings:\n\n");
+                for (String warning : validation.warnings) {
+                    warningMsg.append("• ").append(warning).append("\n");
+                }
+                JOptionPane.showMessageDialog(this,
+                        warningMsg.toString(),
+                        "Network Validation Warnings",
+                        JOptionPane.WARNING_MESSAGE);
+            }
+
+            if (validation.hasErrors()) {
+                StringBuilder errorMsg = new StringBuilder("Validation found the following errors:\n\n");
+                for (String error : validation.errors) {
+                    errorMsg.append("• ").append(error).append("\n");
+                }
+                JOptionPane.showMessageDialog(this,
+                        errorMsg.toString(),
+                        "Validation Error",
+                        JOptionPane.ERROR_MESSAGE);
+            } else if (validation.warnings.isEmpty()) {
                 JOptionPane.showMessageDialog(this,
                         "Network validation successful: No issues found.",
                         "Validation Result",
                         JOptionPane.INFORMATION_MESSAGE);
-            } else {
-                StringBuilder message = new StringBuilder("Network validation found the following issues:\n\n");
-                for (String error : errors) {
-                    message.append("• ").append(error).append("\n");
-                }
-                JOptionPane.showMessageDialog(this,
-                        message.toString(),
-                        "Validation Result",
-                        JOptionPane.WARNING_MESSAGE);
             }
         });
 
@@ -979,6 +992,7 @@ public class NetworkEditorGUI extends JFrame {
 
         JMenuItem trainingSettingsItem = new JMenuItem("Training Settings...");
         trainingSettingsItem.addActionListener(e -> {
+            if (netTrain == null) netTrain = new NetTrain();
             TrainingSettingsDialog dialog = new TrainingSettingsDialog(this, netTrain);
             dialog.showDialog();
         });

@@ -1,6 +1,8 @@
 package pl.szajsjem.data;
 
 import javax.swing.*;
+import javax.swing.filechooser.FileSystemView;
+import javax.swing.filechooser.FileView;
 import java.awt.*;
 import java.io.BufferedReader;
 import java.io.File;
@@ -21,7 +23,6 @@ public class CSVLoaderDialog extends JDialog {
     private String[] headers;
     private File selectedFile;
     private LoadedData result = null;
-
 
     public CSVLoaderDialog(JFrame parent) {
         super(parent, "Load CSV Data", true);
@@ -55,7 +56,7 @@ public class CSVLoaderDialog extends JDialog {
 
         // Browse button action
         browseButton.addActionListener(e -> {
-            JFileChooser fileChooser = new JFileChooser();
+            JFileChooser fileChooser = getjFileChooser();
             fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
                 public boolean accept(File f) {
                     return f.isDirectory() || f.getName().toLowerCase().endsWith(".csv");
@@ -80,6 +81,50 @@ public class CSVLoaderDialog extends JDialog {
                 setVisible(false);
             }
         });
+    }
+
+    private static JFileChooser getjFileChooser() {
+        JFileChooser fileChooser = new JFileChooser() {
+            @Override
+            protected void setup(FileSystemView view) {
+                putClientProperty("FileChooser.useShellFolder", Boolean.FALSE);
+                super.setup(view);
+            }
+        };
+
+        // Use a simple file view that doesn't use system icons
+        fileChooser.setFileView(new FileView() {
+            @Override
+            public String getName(File f) {
+                return f.getName();
+            }
+
+            @Override
+            public String getDescription(File f) {
+                return f.getName();
+            }
+
+            @Override
+            public String getTypeDescription(File f) {
+                return f.isDirectory() ? "Folder" : "File";
+            }
+
+            @Override
+            public Icon getIcon(File f) {
+                // Return a simple default icon based on whether it's a directory or file
+                return UIManager.getIcon(f.isDirectory() ? "FileView.directoryIcon" : "FileView.fileIcon");
+            }
+        });
+        fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
+            public boolean accept(File f) {
+                return f.isDirectory() || f.getName().toLowerCase().endsWith(".bnn");
+            }
+
+            public String getDescription() {
+                return "Neural Network Files (*.bnn)";
+            }
+        });
+        return fileChooser;
     }
 
     public static LoadedData showDialog(JFrame parent) {

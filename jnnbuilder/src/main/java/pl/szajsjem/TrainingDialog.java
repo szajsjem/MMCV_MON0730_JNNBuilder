@@ -42,13 +42,12 @@ public class TrainingDialog extends JDialog {
         // Create components
         JPanel topPanel = new JPanel(new BorderLayout(5, 5));
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        startButton = new JButton("Start Training");
+        startButton = new JButton("Train network");
         trainMoreButton = new JButton("Train More");
         stopButton = new JButton("Stop Training");
         stopButton.setEnabled(false);
         trainMoreButton.setEnabled(false);
         buttonPanel.add(startButton);
-        buttonPanel.add(trainMoreButton);
         buttonPanel.add(stopButton);
         topPanel.add(buttonPanel, BorderLayout.WEST);
         add(topPanel, BorderLayout.NORTH);
@@ -67,7 +66,7 @@ public class TrainingDialog extends JDialog {
         add(mainContent, BorderLayout.CENTER);
 
         // Test input panel
-        testInput = new TestInputPanel(trainingData);
+        testInput = new TestInputPanel(trainingData, this);
         add(testInput, BorderLayout.SOUTH);
 
         // Button actions
@@ -80,6 +79,7 @@ public class TrainingDialog extends JDialog {
             // Build network if not already built
             if (network == null) {
                 network = networkSerializer.buildNetwork();
+                network.init(trainingData.inputs[0].length);
             }
 
             // Setup training
@@ -98,15 +98,15 @@ public class TrainingDialog extends JDialog {
                 @Override
                 public void run() {
                     SwingUtilities.invokeLater(() -> {
-                        updateGraph();
                         updateOutputPreview();
                     });
                 }
             }, 0, 1000); // Update every second
 
             // Start training in background thread
-            new Thread(this::trainNetwork).start();
-
+            var th = new Thread(this::trainNetwork);
+            th.setDaemon(true);
+            th.start();
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this,
                     "Error starting training: " + e.getMessage(),
@@ -144,9 +144,17 @@ public class TrainingDialog extends JDialog {
                         "Training error: " + e.getMessage(),
                         "Error",
                         JOptionPane.ERROR_MESSAGE);
-                stopTraining();
             });
         }
+        updateGraph();
+        stopTraining();
+        updateOutputPreview();
+        SwingUtilities.invokeLater(() -> {
+            JOptionPane.showMessageDialog(this,
+                    "Finished training",
+                    "Message",
+                    JOptionPane.PLAIN_MESSAGE);
+        });
     }
 
     private float[] flattenArray(float[][] array2D) {
